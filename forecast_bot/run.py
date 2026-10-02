@@ -53,7 +53,7 @@ def load_env_file(path) -> None:
 def missing_keys(env: Optional[dict] = None) -> list[str]:
     env = os.environ if env is None else env
     missing = [k for k in ("METACULUS_TOKEN", "OPENROUTER_API_KEY") if not env.get(k)]
-    needs_asknews = env.get("FORECAST_RESEARCH", "asknews") == "asknews"
+    needs_asknews = env.get("FORECAST_RESEARCH", "asknews") in ("asknews", "asknews-latest")
     if needs_asknews and not (env.get("ASKNEWS_API_KEY") or (env.get("ASKNEWS_CLIENT_ID") and env.get("ASKNEWS_SECRET"))):
         missing.append("ASKNEWS_API_KEY")
     return missing
@@ -97,7 +97,6 @@ async def run(
     asknews_cap: int = ASKNEWS_MONTHLY_CAP,
 ) -> RunResult:
     from forecast_bot import ai_guard, guarded_llm, journal as J
-    from forecast_bot.bot import ASKNEWS_CALLS_PER_RESEARCH
 
     ai_guard.LIMITS["per_user_day_calls"] = max(ai_guard.LIMITS["per_user_day_calls"], PER_QUESTION_DAY_CALLS)
     guarded_llm.install_sentinel()
@@ -120,7 +119,8 @@ async def run(
                         tournament=str(tournament), question_type=type(q).__name__,
                         title=q.question_text, url=q.page_url, mode=mode, model=model)
 
-            if journal.asknews_calls_this_month() + ASKNEWS_CALLS_PER_RESEARCH > asknews_cap:
+            per_q = getattr(bot, "asknews_calls_per_research", 0)
+            if per_q and journal.asknews_calls_this_month() + per_q > asknews_cap:
                 row = dict(base, status=J.SKIPPED_ASKNEWS, error=f"AskNews: потолок {asknews_cap}/мес")
                 journal.record(**row)
                 result.rows.append(row)
@@ -227,8 +227,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--model", default=None, help="основная модель (перекрывает FORECAST_MODEL)")
     ap.add_argument("--predictions", type=int, default=None, help="прогнозов на вопрос (перекрывает FORECAST_PREDICTIONS)")
-    ap.add_argument("--research", choices=["asknews", "online", "none"], default=None,
-                    help="поиск: AskNews (по умолчанию) / веб-поиск OpenRouter :online / без поиска")
+    ap.add_argument("--research", choices=["asknews", "asknews-latest", "online", "none"], default=None,
+                    help="поиск: AskNews свежие+архив (6 вызовов) / только свежие (1) / OpenRouter :online / без поиска")
     ap.add_argument("--report-dir", default=None, help="куда положить отчёт dry-run (по умолчанию _отчёты/ основного чекаута)")
     args = ap.parse_args(argv)
     if args.research:

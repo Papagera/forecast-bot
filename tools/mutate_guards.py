@@ -56,6 +56,9 @@ SOURCE_MUTATIONS = {
     "режим поиска не доходит": (
         "forecast_bot.bot", '"researcher": build_researcher(research, model),', '"researcher": ASKNEWS_PRESET,',
         "tests/test_run.py::test_research_modes_without_asknews"),
+    "свежие новости считаются как архив": (
+        "forecast_bot.bot", "ASKNEWS_LATEST: 1}", "ASKNEWS_LATEST: 0}",
+        "tests/test_run.py::test_asknews_latest_mode_costs_one_call"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

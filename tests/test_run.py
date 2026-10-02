@@ -206,6 +206,25 @@ def test_research_modes_without_asknews(fake_llm, fake_asknews, monkeypatch, mod
     assert news_in_forecast_prompt is expect_research_call
 
 
+def test_asknews_latest_mode_costs_one_call(fake_llm, fake_asknews, monkeypatch):
+    from forecast_bot.bot import ForecastBot
+
+    seen = []
+
+    async def fake_latest(self, query):
+        seen.append(query)
+        return "Here are the relevant news articles:\n\n**Свежая новость**\nсобытие ещё не произошло"
+
+    monkeypatch.setattr(ForecastBot, "_asknews_latest", fake_latest)
+    monkeypatch.setenv("FORECAST_RESEARCH", "asknews-latest")
+    monkeypatch.setenv("FORECAST_PREDICTIONS", "1")
+    client = FakeMetaculusClient(questions()[:2])
+    result, journal = _run(client, submit=False, bot=ForecastBot())
+    assert [r["asknews_calls"] for r in result.rows] == [1, 1]
+    assert len(seen) == 2 and fake_asknews == []  # архивный пресет шаблона не звали
+    assert journal.asknews_calls_this_month() == 2
+
+
 def test_test_tournament_is_dry_only(monkeypatch):
     monkeypatch.setenv("FORECAST_SUBMIT", "1")
     called = []
