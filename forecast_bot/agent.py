@@ -152,8 +152,9 @@ def stock_history(symbol: str) -> str:
 class ResearchAgent:
     def __init__(self, model: str, *, question_budget_usd: float = 0.30,
                  news: Callable[[str], Awaitable[str]] | None = None,
-                 max_tokens: int = 4000) -> None:
+                 max_tokens: int = 4000, max_news: int = MAX_NEWS_CALLS) -> None:
         self.model = model
+        self.max_news = max_news
         self.question_budget_usd = question_budget_usd
         self.news = news
         self.max_tokens = max_tokens
@@ -168,7 +169,7 @@ class ResearchAgent:
 
     async def _run_tool(self, name: str, args: dict) -> str:
         if name == "search_news":
-            if self.news is None or self.news_calls >= MAX_NEWS_CALLS:
+            if self.news is None or self.news_calls >= self.max_news:
                 return "Поиск новостей недоступен (исчерпан лимит вызовов на вопрос)."
             self.news_calls += 1
             return _clip(await self.news(str(args.get("query", ""))[:300]))

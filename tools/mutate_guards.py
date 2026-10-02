@@ -66,7 +66,7 @@ SOURCE_MUTATIONS = {
         "forecast_bot.ai_guard", '"forecast": {"day_usd": 3.0},', '"forecast": {"day_usd": 1e9},',
         "tests/test_run.py::test_daily_cap_counts_earlier_runs_from_saved_ledger"),
     "агент: новости без лимита": (
-        "forecast_bot.agent", "if self.news is None or self.news_calls >= MAX_NEWS_CALLS:", "if self.news is None:",
+        "forecast_bot.agent", "if self.news is None or self.news_calls >= self.max_news:", "if self.news is None:",
         "tests/test_agent.py::test_news_calls_capped_per_question"),
     "агент: шаги без лимита": (
         "forecast_bot.agent", "last = step == MAX_STEPS or over_budget", "last = over_budget",
