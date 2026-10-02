@@ -15,6 +15,7 @@ import fcntl
 import json
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -76,6 +77,22 @@ def _prediction_json(prediction: Any) -> str:
     return json.dumps(prediction, ensure_ascii=False, default=str)
 
 
+def _forecast_number_check(explanation: str, q: Any) -> tuple[int, int]:
+    """Числа в рассуждении прогнозиста, которых нет ни в исследовании, ни в тексте вопроса."""
+    from forecast_bot import verify
+
+    marker = "# FORECASTS"
+    i = explanation.find(marker)
+    forecast_part = explanation[i:] if i >= 0 else explanation
+    # Собственные оценки прогнозиста — не факты: строки ответа (Probability/Percentile/«вариант: NN%») не считаем.
+    answer_line = re.compile(r"(Probability|Percentile|^\s*[^:\n]{1,80}:\s*-?\d+(\.\d+)?\s*%?\s*$)", re.I)
+    forecast_part = "\n".join(line for line in forecast_part.splitlines() if not answer_line.search(line))
+    corpus = (explanation[:i] if i >= 0 else "") + " ".join(
+        str(x or "") for x in (q.question_text, q.resolution_criteria, q.fine_print, q.background_info,
+                               getattr(q, "lower_bound", ""), getattr(q, "upper_bound", "")))
+    return verify.unsupported_numbers(forecast_part, corpus)
+
+
 def _readable(prediction: Any) -> str:
     from forecasting_tools.data_models.data_organizer import DataOrganizer
 
@@ -95,6 +112,7 @@ async def run(
     limit: Optional[int] = None,
     run_id: Optional[str] = None,
     asknews_cap: int = ASKNEWS_MONTHLY_CAP,
+    variant: Optional[str] = None,
 ) -> RunResult:
     from forecast_bot import ai_guard, guarded_llm, journal as J
 
@@ -140,7 +158,10 @@ async def run(
             cost, ledger_calls = ai_guard.spent_by_user(ledger_user, t0)
             guarded_calls = guarded_llm.GUARDED_CALLS.pop(user, 0)
             base.update(cost_usd=cost, llm_calls=ledger_calls,
-                        asknews_calls=bot.asknews_calls.pop(qid, 0))
+                        asknews_calls=bot.asknews_calls.pop(qid, 0),
+                        **getattr(bot, "research_stats", {}).pop(qid, {}))
+            if variant:
+                base["variant"] = variant
 
             budget_hit = guarded_llm.BUDGET_HITS.pop(user, None)
             if budget_hit:
@@ -168,8 +189,9 @@ async def run(
                 result.stopped_reason = err
                 return result
 
+            fn, fu = _forecast_number_check(report.explanation, q)
             row = dict(base, status=J.OK, prediction=_prediction_json(report.prediction),
-                       reasoning=report.explanation)
+                       reasoning=report.explanation, forecast_numbers=fn, forecast_unverified=fu)
             if submit:
                 await report.publish_report_to_metaculus(metaculus_client=client)
                 row["submitted_at"] = time.time()

@@ -81,6 +81,21 @@ SOURCE_MUTATIONS = {
         "forecast_bot.agent", "resp = await guarded_llm.guarded_completion(self.model, messages, max_tokens=self.max_tokens,",
         "from forecasting_tools.ai_models import general_llm as _g; resp = await _g.acompletion(model=self.model, messages=messages, max_tokens=self.max_tokens,",
         "tests/test_agent.py::test_agent_research_reaches_forecaster_and_ledger"),
+    "сверка: выдуманное число проходит": (
+        "forecast_bot.verify", "        if missing:\n            unverified += missing", "        if False:\n            unverified += missing",
+        "tests/test_verify.py::test_invented_number_drops_whole_fact"),
+    "сверка: любой источник вместо процитированного": (
+        "forecast_bot.verify", 'ids = (cited_ids(line) & set(norm)) | {"S0"}', 'ids = set(norm)',
+        "tests/test_verify.py::test_number_from_wrong_source_is_dropped"),
+    "сверка: частичное совпадение числа": (
+        "forecast_bot.verify", 'rf"(?<![\\d.]){re.escape(num)}(?:0*)(?![\\d])"', 'rf"{re.escape(num)}"',
+        "tests/test_verify.py::test_partial_match_is_not_a_match"),
+    "агент: сверка не применяется": (
+        "forecast_bot.agent", "        return self.verdict.text\n", "        return self.raw_brief\n",
+        "tests/test_verify.py::test_agent_hallucination_is_dropped_and_journaled"),
+    "приложение без потолка разрешено": (
+        "forecast_bot.guarded_llm", "if app not in ai_guard.APP_LIMITS:", "if False:",
+        "tests/test_guard.py::test_unknown_app_name_refused"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

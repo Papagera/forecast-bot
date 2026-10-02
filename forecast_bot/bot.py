@@ -112,6 +112,7 @@ class ForecastBot(FallTemplateBot2026):
         kwargs["skip_previously_forecasted_questions"] = False
         super().__init__(**kwargs)
         self.asknews_calls: Counter[int] = Counter()
+        self.research_stats: dict[int, dict] = {}  # сверка чисел исследования агента (verify.check)
         # У шаблона семафор — атрибут класса, привязывается к первому event loop; второй
         # asyncio.run в том же процессе (тесты) упал бы «bound to a different event loop».
         self._concurrency_limiter = asyncio.Semaphore(self._max_concurrent_questions)
@@ -149,6 +150,12 @@ class ForecastBot(FallTemplateBot2026):
                 return await agent.research(question)
             finally:
                 self.asknews_calls[question.id_of_question] += agent.news_calls
+                if agent.verdict is not None:
+                    self.research_stats[question.id_of_question] = {
+                        "research_numbers": agent.verdict.numbers_total,
+                        "research_unverified": agent.verdict.numbers_unverified,
+                        "research_dropped": "\n".join(agent.verdict.dropped)[:4000],
+                    }
 
     async def _asknews_latest(self, query: str) -> str:
         """Один запрос AskNews «latest news» (48 ч) — та же разметка, что у пресета шаблона

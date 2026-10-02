@@ -66,6 +66,8 @@ PROVIDER_LIMITS = {
 APP_LIMITS = {
     # forecast-bot (личное, вне EZCAR): потолок $3/день — указание income 02.10.2026.
     "forecast": {"day_usd": 3.0},
+    # Замеры вариантов на Mac (блок 2.1, income 03.10.2026): 4 варианта × ~16 вопросов ≈ $5 (≈оценка).
+    "forecast-lab": {"day_usd": 8.0},
 }
 
 APP_PROVIDER_LIMITS: dict[str, dict[str, dict[str, float]]] = {}
@@ -82,6 +84,7 @@ PRICES: dict[tuple[str, str], tuple[float, float]] = {
     ("openrouter", "openrouter/openai/gpt-4o-mini"): (0.00015, 0.0006),
     ("openrouter", "openrouter/openai/gpt-4o"): (0.0025, 0.01),
     ("openrouter", "openrouter/google/gemini-3.5-flash"): (0.0015, 0.009),
+    ("openrouter", "openrouter/anthropic/claude-haiku-4.5"): (0.001, 0.005),
     ("openrouter", "openrouter/google/gemini-3.1-pro-preview"): (0.002, 0.012),
 }
 
