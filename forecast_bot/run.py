@@ -28,6 +28,8 @@ logger = logging.getLogger("forecast_bot")
 # Турниры (forecasting_tools/helpers/metaculus_client.py, 0.3.2): Fall 2026 FutureEval = 33121,
 # MiniBench — слаг, сам переходит на новый двухнедельный раунд (текущий раунд = project 33125).
 TOURNAMENTS = {"fall": 33121, "minibench": "minibench"}
+# Песочница Metaculus для проверки бота (main.py шаблона, режим test_questions) — только для dry-run.
+TEST_TOURNAMENT = "bot-testing-area"
 ASKNEWS_MONTHLY_CAP = 900  # решение income 02.10.2026: при лимите AskNews 1k/мес
 PER_QUESTION_DAY_CALLS = 40  # ~16 вызовов на вопрос (1 сводка + 5 прогнозов + 10 парсеров) + запас на повторы
 
@@ -221,7 +223,7 @@ def run_lock():
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="forecast_bot.run")
     ap.add_argument("--mode", choices=["dry", "submit"], default="dry")
-    ap.add_argument("--tournament", choices=["minibench", "fall", "both"], default="minibench")
+    ap.add_argument("--tournament", choices=["minibench", "fall", "both", "test"], default="minibench")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--model", default=None, help="основная модель (перекрывает FORECAST_MODEL)")
     ap.add_argument("--predictions", type=int, default=None, help="прогнозов на вопрос (перекрывает FORECAST_PREDICTIONS)")
@@ -250,6 +252,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("Отправка запрещена: нужен FORECAST_SUBMIT=1 в .env (ставится после «да» income). Прогон не начат.")
         return 3
 
+    if args.tournament == "test" and args.mode != "dry":
+        print("bot-testing-area — только для dry-run. Прогон не начат.")
+        return 4
     names = ["minibench", "fall"] if args.tournament == "both" else [args.tournament]
     with run_lock() as acquired:
         if not acquired:
@@ -261,7 +266,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         from forecast_bot.journal import Journal
 
         result = asyncio.run(run(client=MetaculusClient(), bot=ForecastBot(), journal=Journal(paths.journal_db()),
-                                 tournaments=[TOURNAMENTS[n] for n in names], submit=submit, limit=args.limit))
+                                 tournaments=[TOURNAMENTS.get(n, TEST_TOURNAMENT) for n in names], submit=submit, limit=args.limit))
     if not submit:
         report_path = paths.reports_dir() / f"dry-run-{dt.date.today():%Y-%m-%d}-{result.run_id}.md"
         write_dry_report(result, report_path)

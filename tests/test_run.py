@@ -206,6 +206,14 @@ def test_research_modes_without_asknews(fake_llm, fake_asknews, monkeypatch, mod
     assert news_in_forecast_prompt is expect_research_call
 
 
+def test_test_tournament_is_dry_only(monkeypatch):
+    monkeypatch.setenv("FORECAST_SUBMIT", "1")
+    called = []
+    monkeypatch.setattr(R, "run", lambda **k: called.append(k))
+    assert R.main(["--mode", "submit", "--tournament", "test"]) == 4
+    assert called == []
+
+
 def test_missing_keys_asknews_only_for_asknews_mode():
     base = {"METACULUS_TOKEN": "t", "OPENROUTER_API_KEY": "k"}
     assert R.missing_keys(base) == ["ASKNEWS_API_KEY"]
