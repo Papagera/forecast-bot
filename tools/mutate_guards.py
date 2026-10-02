@@ -65,6 +65,22 @@ SOURCE_MUTATIONS = {
     "дневной потолок бота снят": (
         "forecast_bot.ai_guard", '"forecast": {"day_usd": 3.0},', '"forecast": {"day_usd": 1e9},',
         "tests/test_run.py::test_daily_cap_counts_earlier_runs_from_saved_ledger"),
+    "агент: новости без лимита": (
+        "forecast_bot.agent", "if self.news is None or self.news_calls >= MAX_NEWS_CALLS:", "if self.news is None:",
+        "tests/test_agent.py::test_news_calls_capped_per_question"),
+    "агент: шаги без лимита": (
+        "forecast_bot.agent", "last = step == MAX_STEPS or over_budget", "last = over_budget",
+        "tests/test_agent.py::test_steps_capped_and_last_step_has_no_tool_use"),
+    "агент: нет мягкого стопа по деньгам": (
+        "forecast_bot.agent", "over_budget = self._spent(t0) >= SOFT_STOP_SHARE * self.question_budget_usd",
+        "over_budget = False", "tests/test_agent.py::test_soft_budget_stop_forces_final_brief"),
+    "агент: ходит в локальную сеть": (
+        "forecast_bot.agent", "if ip.is_private or ip.is_loopback", "if False and ip.is_private or ip.is_loopback and False",
+        "tests/test_agent.py::test_fetch_url_refuses_non_public"),
+    "агент: мимо гарда": (
+        "forecast_bot.agent", "resp = await guarded_llm.guarded_completion(self.model, messages, max_tokens=self.max_tokens,",
+        "from forecasting_tools.ai_models import general_llm as _g; resp = await _g.acompletion(model=self.model, messages=messages, max_tokens=self.max_tokens,",
+        "tests/test_agent.py::test_agent_research_reaches_forecaster_and_ledger"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

@@ -29,6 +29,8 @@ ASKNEWS_CALLS_PER_RESEARCH = 6
 # Только «свежие новости» (48 ч) — 1 вызов на вопрос. Указание income 02.10.2026: турнирный
 # бесплатный лимит не подтверждён, расходовать экономно (≤1–2 вызова на вопрос).
 ASKNEWS_LATEST = "asknews/latest-news"
+# Агентный исследователь (блок 2.0): до MAX_NEWS_CALLS свежих поисков AskNews на вопрос.
+AGENT_RESEARCHER = "agent"
 ASKNEWS_CALLS = {ASKNEWS_PRESET: ASKNEWS_CALLS_PER_RESEARCH, ASKNEWS_LATEST: 1}
 
 DEFAULT_MODEL = "openrouter/anthropic/claude-opus-5.5"
@@ -59,7 +61,7 @@ _template = _load_template_module()
 FallTemplateBot2026 = _template.FallTemplateBot2026
 
 
-RESEARCH_MODES = ("asknews", "asknews-latest", "online", "none")
+RESEARCH_MODES = ("asknews", "asknews-latest", "online", "none", "agent")
 
 
 def build_researcher(mode: str, model: str) -> Any:
@@ -74,6 +76,8 @@ def build_researcher(mode: str, model: str) -> Any:
         return GuardedLlm(model=f"{model}:online", temperature=0.1, timeout=180, allowed_tries=2, max_tokens=4000)
     if mode == "none":
         return "no_research"
+    if mode == "agent":
+        return AGENT_RESEARCHER
     raise ValueError(f"неизвестный режим поиска: {mode} (есть {RESEARCH_MODES})")
 
 
@@ -82,9 +86,12 @@ def build_llms() -> dict[str, Any]:
     parser = os.environ.get("FORECAST_PARSER_MODEL", DEFAULT_PARSER)
     research = os.environ.get("FORECAST_RESEARCH", "asknews")
     # max_tokens держит pre-check ai_guard per-call $0.50: 16000 × $0.020/1k = $0.32 для Opus 5.5.
+    reasoning = os.environ.get("FORECAST_REASONING", "").strip()  # low|medium|high → reasoning_effort
+    # С reasoning у Claude температура допустима только по умолчанию — не передаём её.
+    extra = {"reasoning_effort": reasoning} if reasoning else {}
     return {
-        "default": GuardedLlm(model=model, temperature=0.3, timeout=180, allowed_tries=2,
-                              max_tokens=int(os.environ.get("FORECAST_MAX_TOKENS", "16000"))),
+        "default": GuardedLlm(model=model, temperature=None if reasoning else 0.3, timeout=300, allowed_tries=2,
+                              max_tokens=int(os.environ.get("FORECAST_MAX_TOKENS", "16000")), **extra),
         "summarizer": GuardedLlm(model=parser, temperature=0.3, timeout=60, allowed_tries=2, max_tokens=2000),
         "researcher": build_researcher(research, model),
         "parser": GuardedLlm(model=parser, temperature=0.3, timeout=60, allowed_tries=2, max_tokens=2000),
@@ -112,6 +119,9 @@ class ForecastBot(FallTemplateBot2026):
     @property
     def asknews_calls_per_research(self) -> int:
         researcher = self.get_llm("researcher")
+        if researcher == AGENT_RESEARCHER:
+            from forecast_bot.agent import MAX_NEWS_CALLS
+            return MAX_NEWS_CALLS  # верхняя граница — для проверки месячного потолка
         return ASKNEWS_CALLS.get(researcher, 0) if isinstance(researcher, str) else 0
 
     async def run_research(self, question: Any) -> str:
@@ -122,7 +132,23 @@ class ForecastBot(FallTemplateBot2026):
         if researcher == ASKNEWS_LATEST:
             async with self._concurrency_limiter:
                 return await self._asknews_latest(question.question_text)
+        if researcher == AGENT_RESEARCHER:
+            return await self._agent_research(question)
         return await super().run_research(question)
+
+    async def _agent_research(self, question: Any) -> str:
+        from forecast_bot.agent import ResearchAgent
+
+        agent = ResearchAgent(
+            os.environ.get("FORECAST_AGENT_MODEL", os.environ.get("FORECAST_MODEL", DEFAULT_MODEL)),
+            question_budget_usd=float(os.environ.get("FORECAST_QUESTION_BUDGET", "0.30")),
+            news=self._asknews_latest,
+        )
+        async with self._concurrency_limiter:
+            try:
+                return await agent.research(question)
+            finally:
+                self.asknews_calls[question.id_of_question] += agent.news_calls
 
     async def _asknews_latest(self, query: str) -> str:
         """Один запрос AskNews «latest news» (48 ч) — та же разметка, что у пресета шаблона

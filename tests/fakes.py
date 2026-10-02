@@ -84,11 +84,16 @@ class FakeLlm:
         self.prompts: list[str] = []
         self.pt, self.ct = prompt_tokens, completion_tokens
         self.billed_cost = billed_cost  # как OpenRouter usage.cost (litellm кладёт в _hidden_params)
+        self.kwargs: list[dict] = []
+        self.tool_plan = ["search_news", "fred_series"]  # что «агент» вызовет по шагам
 
     async def __call__(self, *args: Any, messages: list | None = None, model: str = "", **kwargs: Any) -> ModelResponse:
         text = str(messages[-1]["content"]) if messages else ""
         self.calls.append(model)
         self.prompts.append(text)
+        self.kwargs.append(kwargs)
+        if kwargs.get("tools"):
+            return self._agent_turn(model, messages, kwargs)
         response = ModelResponse(
             model=model,
             choices=[{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": self._answer(text)}}],
@@ -97,6 +102,22 @@ class FakeLlm:
         if self.billed_cost is not None:
             response._hidden_params = {"additional_headers": {"llm_provider-x-litellm-response-cost": self.billed_cost}}
         return response
+
+    def _agent_turn(self, model: str, messages: list, kwargs: dict) -> ModelResponse:
+        """Фейковый агент: по шагу на инструмент из tool_plan, затем итоговая справка."""
+        done = sum(1 for m in messages if m.get("role") == "tool")
+        usage = {"prompt_tokens": self.pt, "completion_tokens": self.ct, "total_tokens": self.pt + self.ct}
+        if kwargs.get("tool_choice") == "auto" and done < len(self.tool_plan):
+            name = self.tool_plan[done]
+            arg = '{"query": "событие"}' if name == "search_news" else '{"series_id": "UNRATE"}'
+            msg = {"role": "assistant", "content": None, "tool_calls": [
+                {"id": f"c{done}", "type": "function", "function": {"name": name, "arguments": arg}}]}
+            return ModelResponse(model=model, choices=[{"index": 0, "finish_reason": "tool_calls", "message": msg}],
+                                 usage=usage)
+        brief = "Справка агента: событие ещё не произошло. " + " | ".join(
+            str(m.get("content"))[:60] for m in messages if m.get("role") == "tool")
+        return ModelResponse(model=model, usage=usage, choices=[
+            {"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": brief}}])
 
     @staticmethod
     def _answer(text: str) -> str:

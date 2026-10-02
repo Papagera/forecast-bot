@@ -162,6 +162,54 @@ class GuardedLlm(GeneralLlm):
         return result
 
 
+async def guarded_completion(model: str, messages: list[dict], *, max_tokens: int,
+                             tries: int = 2, **kwargs: Any) -> Any:
+    """Сырой вызов модели (агент: tools/tool_calls) — тот же путь, что у GuardedLlm:
+    лимит запуска → ai_guard.acall (pre-check, учёт факта) → сторож `acompletion`.
+    Возвращает litellm ModelResponse целиком (нужны tool_calls)."""
+    user = CURRENT_USER.get()
+    provider = provider_for(model)
+
+    async def fn():
+        sink: list = []
+        token = _IN_GUARD.set(True)
+        sink_token = _COST_SINK.set(sink)
+        try:
+            resp = await _gl.acompletion(model=model, messages=messages, max_tokens=max_tokens, **kwargs)
+        finally:
+            _COST_SINK.reset(sink_token)
+            _IN_GUARD.reset(token)
+        billed = [c for c in sink if c is not None]
+        u = getattr(resp, "usage", None)
+        usage = TokenUsage(input=int(getattr(u, "prompt_tokens", 0) or 0),
+                           output=int(getattr(u, "completion_tokens", 0) or 0),
+                           actual_cost_usd=sum(billed) if billed else None)
+        return resp, usage
+
+    attempt = rate_waits = 0
+    while True:
+        try:
+            _check_run_budget()
+            result = await ai_guard.acall(provider, model, fn, user=user, app=APP, max_tokens=max_tokens,
+                                          price=ai_guard.PRICES.get((provider, price_key(model))))
+            GUARDED_CALLS[user] += 1
+            return result
+        except BudgetExceeded as exc:
+            if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:
+                rate_waits += 1
+                await asyncio.sleep(RATE_WAIT_S)
+                continue
+            BUDGET_HITS.setdefault(user, str(exc))
+            raise
+        except (AIGuardError, UnguardedLlmCall):
+            raise
+        except Exception:
+            attempt += 1
+            if attempt >= tries:
+                raise
+            await asyncio.sleep(RETRY_BACKOFF_S[min(attempt - 1, len(RETRY_BACKOFF_S) - 1)])
+
+
 # ─────────────────────────── сторож ─────────────────────────────────
 _BACKEND: dict[str, Callable[..., Any]] = {}
 
