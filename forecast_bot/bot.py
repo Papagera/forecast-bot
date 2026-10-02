@@ -26,6 +26,10 @@ ASKNEWS_PRESET = "asknews/news-summaries"
 # раздел «Getting AskNews Setup»); пресет news-summaries делает оба запроса
 # (forecasting_tools/helpers/asknews_searcher.py:get_formatted_news_async).
 ASKNEWS_CALLS_PER_RESEARCH = 6
+# Только «свежие новости» (48 ч) — 1 вызов на вопрос. Указание income 02.10.2026: турнирный
+# бесплатный лимит не подтверждён, расходовать экономно (≤1–2 вызова на вопрос).
+ASKNEWS_LATEST = "asknews/latest-news"
+ASKNEWS_CALLS = {ASKNEWS_PRESET: ASKNEWS_CALLS_PER_RESEARCH, ASKNEWS_LATEST: 1}
 
 DEFAULT_MODEL = "openrouter/anthropic/claude-opus-5.5"
 DEFAULT_PARSER = "openrouter/openai/gpt-4o-mini"  # дефолт шаблона для OpenRouter (forecast_bot.py:1013)
@@ -55,15 +59,34 @@ _template = _load_template_module()
 FallTemplateBot2026 = _template.FallTemplateBot2026
 
 
+RESEARCH_MODES = ("asknews", "asknews-latest", "online", "none")
+
+
+def build_researcher(mode: str, model: str) -> Any:
+    """asknews — пресет шаблона (бесплатная квота Metaculus); online — та же модель с веб-поиском
+    OpenRouter `:online` (нативный поиск провайдера, по странице ресурсов Metaculus — покрывается
+    кредитами, если не Exa); none — без поиска (шаблонная ветка `no_research`)."""
+    if mode == "asknews":
+        return ASKNEWS_PRESET
+    if mode == "asknews-latest":
+        return ASKNEWS_LATEST
+    if mode == "online":
+        return GuardedLlm(model=f"{model}:online", temperature=0.1, timeout=180, allowed_tries=2, max_tokens=4000)
+    if mode == "none":
+        return "no_research"
+    raise ValueError(f"неизвестный режим поиска: {mode} (есть {RESEARCH_MODES})")
+
+
 def build_llms() -> dict[str, Any]:
     model = os.environ.get("FORECAST_MODEL", DEFAULT_MODEL)
     parser = os.environ.get("FORECAST_PARSER_MODEL", DEFAULT_PARSER)
+    research = os.environ.get("FORECAST_RESEARCH", "asknews")
     # max_tokens держит pre-check ai_guard per-call $0.50: 16000 × $0.020/1k = $0.32 для Opus 5.5.
     return {
         "default": GuardedLlm(model=model, temperature=0.3, timeout=180, allowed_tries=2,
                               max_tokens=int(os.environ.get("FORECAST_MAX_TOKENS", "16000"))),
         "summarizer": GuardedLlm(model=parser, temperature=0.3, timeout=60, allowed_tries=2, max_tokens=2000),
-        "researcher": ASKNEWS_PRESET,
+        "researcher": build_researcher(research, model),
         "parser": GuardedLlm(model=parser, temperature=0.3, timeout=60, allowed_tries=2, max_tokens=2000),
     }
 
@@ -86,8 +109,33 @@ class ForecastBot(FallTemplateBot2026):
         # asyncio.run в том же процессе (тесты) упал бы «bound to a different event loop».
         self._concurrency_limiter = asyncio.Semaphore(self._max_concurrent_questions)
 
+    @property
+    def asknews_calls_per_research(self) -> int:
+        researcher = self.get_llm("researcher")
+        return ASKNEWS_CALLS.get(researcher, 0) if isinstance(researcher, str) else 0
+
     async def run_research(self, question: Any) -> str:
-        if self.get_llm("researcher") == ASKNEWS_PRESET:
+        researcher = self.get_llm("researcher")
+        if isinstance(researcher, str) and researcher in ASKNEWS_CALLS:
             # Считаем ДО вызова: квота тратится и тогда, когда ответ потом упал.
-            self.asknews_calls[question.id_of_question] += ASKNEWS_CALLS_PER_RESEARCH
+            self.asknews_calls[question.id_of_question] += ASKNEWS_CALLS[researcher]
+        if researcher == ASKNEWS_LATEST:
+            async with self._concurrency_limiter:
+                return await self._asknews_latest(question.question_text)
         return await super().run_research(question)
+
+    async def _asknews_latest(self, query: str) -> str:
+        """Один запрос AskNews «latest news» (48 ч) — та же разметка, что у пресета шаблона
+        (forecasting_tools/helpers/asknews_searcher.py:get_formatted_news_async), без архива."""
+        from asknews_sdk import AsyncAskNewsSDK
+        from forecasting_tools import AskNewsSearcher
+
+        searcher = AskNewsSearcher()  # берёт ключи из env и валидирует их
+        async with AsyncAskNewsSDK(client_id=searcher.client_id, client_secret=searcher.client_secret,
+                                   api_key=searcher.api_key, scopes={"news"}) as ask:
+            response = await ask.news.search_news(query=query, n_articles=8, return_type="both",
+                                                  strategy="latest news")
+        articles = response.as_dicts
+        if not articles:
+            return "Here are the relevant news articles:\n\nNo articles were found.\n"
+        return "Here are the relevant news articles:\n\n" + searcher._format_articles(articles)

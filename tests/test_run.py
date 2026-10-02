@@ -186,3 +186,55 @@ def test_tournament_pins_match_tz():
 
     assert R.TOURNAMENTS == {"fall": 33121, "minibench": "minibench"}
     assert MetaculusClient.CURRENT_AI_COMPETITION_ID == 33121
+
+
+@pytest.mark.parametrize("mode,expect_research_call", [("online", True), ("none", False)])
+def test_research_modes_without_asknews(fake_llm, fake_asknews, monkeypatch, mode, expect_research_call):
+    from forecast_bot.bot import ForecastBot
+
+    monkeypatch.setenv("FORECAST_RESEARCH", mode)
+    monkeypatch.setenv("FORECAST_MODEL", "openrouter/google/gemini-3.5-flash")
+    monkeypatch.setenv("FORECAST_PREDICTIONS", "1")
+    client = FakeMetaculusClient(questions()[:1])
+    result, _ = _run(client, submit=False, bot=ForecastBot())
+    row, = result.rows
+    assert row["status"] == "ok" and row["asknews_calls"] == 0 and fake_asknews == []
+    online = [m for m in fake_llm.calls if m.endswith(":online")]
+    assert bool(online) is expect_research_call
+    news_in_forecast_prompt = any("событие ещё не произошло" in p for p in fake_llm.prompts
+                                  if '"Probability: ZZ%"' in p)
+    assert news_in_forecast_prompt is expect_research_call
+
+
+def test_asknews_latest_mode_costs_one_call(fake_llm, fake_asknews, monkeypatch):
+    from forecast_bot.bot import ForecastBot
+
+    seen = []
+
+    async def fake_latest(self, query):
+        seen.append(query)
+        return "Here are the relevant news articles:\n\n**Свежая новость**\nсобытие ещё не произошло"
+
+    monkeypatch.setattr(ForecastBot, "_asknews_latest", fake_latest)
+    monkeypatch.setenv("FORECAST_RESEARCH", "asknews-latest")
+    monkeypatch.setenv("FORECAST_PREDICTIONS", "1")
+    client = FakeMetaculusClient(questions()[:2])
+    result, journal = _run(client, submit=False, bot=ForecastBot())
+    assert [r["asknews_calls"] for r in result.rows] == [1, 1]
+    assert len(seen) == 2 and fake_asknews == []  # архивный пресет шаблона не звали
+    assert journal.asknews_calls_this_month() == 2
+
+
+def test_test_tournament_is_dry_only(monkeypatch):
+    monkeypatch.setenv("FORECAST_SUBMIT", "1")
+    called = []
+    monkeypatch.setattr(R, "run", lambda **k: called.append(k))
+    assert R.main(["--mode", "submit", "--tournament", "test"]) == 4
+    assert called == []
+
+
+def test_missing_keys_asknews_only_for_asknews_mode():
+    base = {"METACULUS_TOKEN": "t", "OPENROUTER_API_KEY": "k"}
+    assert R.missing_keys(base) == ["ASKNEWS_API_KEY"]
+    assert R.missing_keys({**base, "FORECAST_RESEARCH": "online"}) == []
+    assert R.missing_keys({**base, "FORECAST_RESEARCH": "none"}) == []

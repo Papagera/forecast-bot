@@ -78,18 +78,25 @@ class FakeMetaculusClient(MetaculusClient):
 class FakeLlm:
     """Транспорт вместо litellm.acompletion: отвечает по типу промпта шаблона."""
 
-    def __init__(self, prompt_tokens: int = 1000, completion_tokens: int = 200) -> None:
+    def __init__(self, prompt_tokens: int = 1000, completion_tokens: int = 200,
+                 billed_cost: float | None = None) -> None:
         self.calls: list[str] = []
+        self.prompts: list[str] = []
         self.pt, self.ct = prompt_tokens, completion_tokens
+        self.billed_cost = billed_cost  # как OpenRouter usage.cost (litellm кладёт в _hidden_params)
 
     async def __call__(self, *args: Any, messages: list | None = None, model: str = "", **kwargs: Any) -> ModelResponse:
         text = str(messages[-1]["content"]) if messages else ""
         self.calls.append(model)
-        return ModelResponse(
+        self.prompts.append(text)
+        response = ModelResponse(
             model=model,
             choices=[{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": self._answer(text)}}],
             usage={"prompt_tokens": self.pt, "completion_tokens": self.ct, "total_tokens": self.pt + self.ct},
         )
+        if self.billed_cost is not None:
+            response._hidden_params = {"additional_headers": {"llm_provider-x-litellm-response-cost": self.billed_cost}}
+        return response
 
     @staticmethod
     def _answer(text: str) -> str:
@@ -109,6 +116,8 @@ class FakeLlm:
                 items = ", ".join(f'{{"percentile": {p}, "value": {round(lo + (hi - lo) * f, 4)}}}' for p, f in pts)
                 return f"[{items}]"
             return "<<REQUESTED TYPE WAS NOT FOUND IN TEXT>>"
+        if "You are an assistant to a superforecaster" in text:
+            return "Свежие новости по вопросу: событие ещё не произошло."
         if "Please summarize the following research" in text:
             return "Сводка исследования."
         if '"Probability: ZZ%"' in text:

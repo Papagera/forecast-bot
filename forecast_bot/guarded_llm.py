@@ -27,6 +27,12 @@ APP = "forecast"
 # Кому списывать вызов в леджере: "q<id вопроса>" (ставит раннер на время вопроса).
 CURRENT_USER: contextvars.ContextVar[str] = contextvars.ContextVar("forecast_user", default="run")
 _IN_GUARD: contextvars.ContextVar[bool] = contextvars.ContextVar("forecast_in_guard", default=False)
+# Куда сторож складывает фактическую стоимость из ответа провайдера (см. _billed_cost).
+_COST_SINK: contextvars.ContextVar[list | None] = contextvars.ContextVar("forecast_cost_sink", default=None)
+
+# Ключ, под которым litellm кладёт `usage.cost` из ответа OpenRouter
+# (litellm/llms/openrouter/chat/transformation.py:transform_response; usage.include ставится всегда).
+_OPENROUTER_COST_KEY = "llm_provider-x-litellm-response-cost"
 
 # Учёт для раннера: сколько вызовов прошло через гард и кто упёрся в лимит.
 GUARDED_CALLS: Counter[str] = Counter()
@@ -51,6 +57,21 @@ def _is_rate_limit(exc: BudgetExceeded) -> bool:
 
 def provider_for(model: str) -> str:
     return model.split("/", 1)[0] if "/" in model else "openai"
+
+
+def price_key(model: str) -> str:
+    """`:online` (веб-поиск OpenRouter) не меняет токенную цену; плата за поиск придёт
+    в фактической стоимости ответа, а не в pre-check."""
+    return model.removesuffix(":online")
+
+
+def _billed_cost(response: Any) -> float | None:
+    hidden = getattr(response, "_hidden_params", None) or {}
+    value = (hidden.get("additional_headers") or {}).get(_OPENROUTER_COST_KEY)
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 class GuardedLlm(GeneralLlm):
@@ -90,21 +111,29 @@ class GuardedLlm(GeneralLlm):
         parent = super()._mockable_direct_call_to_model
 
         async def fn():
+            sink: list = []
             token = _IN_GUARD.set(True)
+            sink_token = _COST_SINK.set(sink)
             try:
                 resp = await parent(prompt)
             finally:
+                _COST_SINK.reset(sink_token)
                 _IN_GUARD.reset(token)
+            billed = [c for c in sink if c is not None]
+            # Приоритет: счёт провайдера (вкл. веб-поиск) → оценка litellm → цена из PRICES (в ai_guard).
+            actual = sum(billed) if billed else (float(resp.cost) if resp.cost else None)
             usage = TokenUsage(
                 input=int(resp.prompt_tokens_used or 0),
                 output=int(resp.completion_tokens_used or 0),
-                actual_cost_usd=float(resp.cost) if resp.cost else None,
+                actual_cost_usd=actual,
             )
             return resp, usage
 
+        provider = provider_for(self.model)
         result = await ai_guard.acall(
-            provider_for(self.model), self.model, fn,
+            provider, self.model, fn,
             user=user, app=APP, max_tokens=self.guard_max_tokens,
+            price=ai_guard.PRICES.get((provider, price_key(self.model))),
         )
         GUARDED_CALLS[user] += 1
         return result
@@ -127,7 +156,11 @@ def _guarded(name: str):
         if not _IN_GUARD.get():
             UNGUARDED_ATTEMPTS.append(f"{name}:{kwargs.get('model')}")
             raise UnguardedLlmCall(f"{name}({kwargs.get('model')}) вызван мимо ai_guard — отклонено")
-        return await _BACKEND[name](*args, **kwargs)
+        response = await _BACKEND[name](*args, **kwargs)
+        sink = _COST_SINK.get()
+        if sink is not None:
+            sink.append(_billed_cost(response))
+        return response
     wrapper.__forecast_sentinel__ = True  # type: ignore[attr-defined]
     return wrapper
 

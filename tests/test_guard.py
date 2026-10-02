@@ -132,3 +132,20 @@ def test_load_env_file_does_not_override(tmp_path, monkeypatch):
 
     assert os.environ["METACULUS_TOKEN"] == "fake-metaculus" and os.environ["NEW_KEY_X"] == "v"
     monkeypatch.delenv("NEW_KEY_X")
+
+
+def test_provider_billed_cost_goes_to_ledger(fake_llm):
+    """OpenRouter usage.cost (вкл. плату за веб-поиск) важнее токенной цены."""
+    fake_llm.billed_cost = 0.0421
+    llm = guarded_llm.GuardedLlm("openrouter/google/gemini-3.5-flash:online", max_tokens=1000)
+    asyncio.run(llm.invoke("hi"))
+    (_, model, _, _, _, cost), = _rows()
+    assert model == "openrouter/google/gemini-3.5-flash:online" and cost == pytest.approx(0.0421)
+
+
+def test_online_suffix_uses_base_price_for_precheck(fake_llm):
+    assert guarded_llm.price_key("openrouter/google/gemini-3.5-flash:online") == "openrouter/google/gemini-3.5-flash"
+    llm = guarded_llm.GuardedLlm("openrouter/google/gemini-3.5-flash:online", max_tokens=1000)
+    asyncio.run(llm.invoke("hi"))
+    (_, _, _, _, _, cost), = _rows()
+    assert cost == pytest.approx(1000 / 1000 * 0.0015 + 200 / 1000 * 0.009)

@@ -28,6 +28,8 @@ logger = logging.getLogger("forecast_bot")
 # Турниры (forecasting_tools/helpers/metaculus_client.py, 0.3.2): Fall 2026 FutureEval = 33121,
 # MiniBench — слаг, сам переходит на новый двухнедельный раунд (текущий раунд = project 33125).
 TOURNAMENTS = {"fall": 33121, "minibench": "minibench"}
+# Песочница Metaculus для проверки бота (main.py шаблона, режим test_questions) — только для dry-run.
+TEST_TOURNAMENT = "bot-testing-area"
 ASKNEWS_MONTHLY_CAP = 900  # решение income 02.10.2026: при лимите AskNews 1k/мес
 PER_QUESTION_DAY_CALLS = 40  # ~16 вызовов на вопрос (1 сводка + 5 прогнозов + 10 парсеров) + запас на повторы
 
@@ -51,7 +53,8 @@ def load_env_file(path) -> None:
 def missing_keys(env: Optional[dict] = None) -> list[str]:
     env = os.environ if env is None else env
     missing = [k for k in ("METACULUS_TOKEN", "OPENROUTER_API_KEY") if not env.get(k)]
-    if not (env.get("ASKNEWS_API_KEY") or (env.get("ASKNEWS_CLIENT_ID") and env.get("ASKNEWS_SECRET"))):
+    needs_asknews = env.get("FORECAST_RESEARCH", "asknews") in ("asknews", "asknews-latest")
+    if needs_asknews and not (env.get("ASKNEWS_API_KEY") or (env.get("ASKNEWS_CLIENT_ID") and env.get("ASKNEWS_SECRET"))):
         missing.append("ASKNEWS_API_KEY")
     return missing
 
@@ -94,7 +97,6 @@ async def run(
     asknews_cap: int = ASKNEWS_MONTHLY_CAP,
 ) -> RunResult:
     from forecast_bot import ai_guard, guarded_llm, journal as J
-    from forecast_bot.bot import ASKNEWS_CALLS_PER_RESEARCH
 
     ai_guard.LIMITS["per_user_day_calls"] = max(ai_guard.LIMITS["per_user_day_calls"], PER_QUESTION_DAY_CALLS)
     guarded_llm.install_sentinel()
@@ -117,7 +119,8 @@ async def run(
                         tournament=str(tournament), question_type=type(q).__name__,
                         title=q.question_text, url=q.page_url, mode=mode, model=model)
 
-            if journal.asknews_calls_this_month() + ASKNEWS_CALLS_PER_RESEARCH > asknews_cap:
+            per_q = getattr(bot, "asknews_calls_per_research", 0)
+            if per_q and journal.asknews_calls_this_month() + per_q > asknews_cap:
                 row = dict(base, status=J.SKIPPED_ASKNEWS, error=f"AskNews: потолок {asknews_cap}/мес")
                 journal.record(**row)
                 result.rows.append(row)
@@ -220,11 +223,18 @@ def run_lock():
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="forecast_bot.run")
     ap.add_argument("--mode", choices=["dry", "submit"], default="dry")
-    ap.add_argument("--tournament", choices=["minibench", "fall", "both"], default="minibench")
+    ap.add_argument("--tournament", choices=["minibench", "fall", "both", "test"], default="minibench")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--model", default=None, help="основная модель (перекрывает FORECAST_MODEL)")
     ap.add_argument("--predictions", type=int, default=None, help="прогнозов на вопрос (перекрывает FORECAST_PREDICTIONS)")
+    ap.add_argument("--research", choices=["asknews", "asknews-latest", "online", "none"], default=None,
+                    help="поиск: AskNews свежие+архив (6 вызовов) / только свежие (1) / OpenRouter :online / без поиска")
+    ap.add_argument("--report-dir", default=None, help="куда положить отчёт dry-run (по умолчанию _отчёты/ основного чекаута)")
     args = ap.parse_args(argv)
+    if args.research:
+        os.environ["FORECAST_RESEARCH"] = args.research
+    if args.report_dir:
+        os.environ["FORECAST_REPORTS_DIR"] = args.report_dir
     if args.model:
         os.environ["FORECAST_MODEL"] = args.model
     if args.predictions:
@@ -242,6 +252,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("Отправка запрещена: нужен FORECAST_SUBMIT=1 в .env (ставится после «да» income). Прогон не начат.")
         return 3
 
+    if args.tournament == "test" and args.mode != "dry":
+        print("bot-testing-area — только для dry-run. Прогон не начат.")
+        return 4
     names = ["minibench", "fall"] if args.tournament == "both" else [args.tournament]
     with run_lock() as acquired:
         if not acquired:
@@ -253,7 +266,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         from forecast_bot.journal import Journal
 
         result = asyncio.run(run(client=MetaculusClient(), bot=ForecastBot(), journal=Journal(paths.journal_db()),
-                                 tournaments=[TOURNAMENTS[n] for n in names], submit=submit, limit=args.limit))
+                                 tournaments=[TOURNAMENTS.get(n, TEST_TOURNAMENT) for n in names], submit=submit, limit=args.limit))
     if not submit:
         report_path = paths.reports_dir() / f"dry-run-{dt.date.today():%Y-%m-%d}-{result.run_id}.md"
         write_dry_report(result, report_path)
