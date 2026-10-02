@@ -161,6 +161,26 @@ def test_asknews_monthly_cap_skips_without_llm(fake_llm, fake_asknews):
     assert fake_llm.calls == [] and fake_asknews == [] and client.predictions == []
 
 
+def test_cli_model_and_predictions_reach_bot(monkeypatch):
+    seen = {}
+
+    async def fake_run(**k):
+        seen["model"] = k["bot"].get_llm("default", "llm").model
+        seen["n"] = k["bot"].predictions_per_research_report
+        return R.RunResult(run_id="t", submit=False)
+
+    monkeypatch.setattr(R, "run", fake_run)
+    assert R.main(["--model", "openrouter/google/gemini-3.5-flash", "--predictions", "1"]) == 0
+    assert seen == {"model": "openrouter/google/gemini-3.5-flash", "n": 1}
+
+
+def test_every_default_model_has_a_price():
+    from forecast_bot import bot
+
+    for m in (bot.DEFAULT_MODEL, bot.DEFAULT_PARSER, "openrouter/google/gemini-3.5-flash"):
+        assert ("openrouter", m) in ai_guard.PRICES
+
+
 def test_tournament_pins_match_tz():
     from forecasting_tools import MetaculusClient
 

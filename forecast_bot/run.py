@@ -222,7 +222,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--mode", choices=["dry", "submit"], default="dry")
     ap.add_argument("--tournament", choices=["minibench", "fall", "both"], default="minibench")
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--model", default=None, help="основная модель (перекрывает FORECAST_MODEL)")
+    ap.add_argument("--predictions", type=int, default=None, help="прогнозов на вопрос (перекрывает FORECAST_PREDICTIONS)")
     args = ap.parse_args(argv)
+    if args.model:
+        os.environ["FORECAST_MODEL"] = args.model
+    if args.predictions:
+        os.environ["FORECAST_PREDICTIONS"] = str(args.predictions)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     load_env_file(paths.env_path())
