@@ -50,6 +50,12 @@ SOURCE_MUTATIONS = {
     "фактическая цена игнорируется": (
         "forecast_bot.ai_guard", "if usage.actual_cost_usd is not None and usage.actual_cost_usd > 0:", "if False:",
         "tests/test_guard.py::test_actual_cost_from_provider_wins_over_price_table"),
+    "счёт OpenRouter игнорируется": (
+        "forecast_bot.guarded_llm", "billed = [c for c in sink if c is not None]", "billed = []",
+        "tests/test_guard.py::test_provider_billed_cost_goes_to_ledger"),
+    "режим поиска не доходит": (
+        "forecast_bot.bot", '"researcher": build_researcher(research, model),', '"researcher": ASKNEWS_PRESET,',
+        "tests/test_run.py::test_research_modes_without_asknews"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

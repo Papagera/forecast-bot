@@ -51,7 +51,8 @@ def load_env_file(path) -> None:
 def missing_keys(env: Optional[dict] = None) -> list[str]:
     env = os.environ if env is None else env
     missing = [k for k in ("METACULUS_TOKEN", "OPENROUTER_API_KEY") if not env.get(k)]
-    if not (env.get("ASKNEWS_API_KEY") or (env.get("ASKNEWS_CLIENT_ID") and env.get("ASKNEWS_SECRET"))):
+    needs_asknews = env.get("FORECAST_RESEARCH", "asknews") == "asknews"
+    if needs_asknews and not (env.get("ASKNEWS_API_KEY") or (env.get("ASKNEWS_CLIENT_ID") and env.get("ASKNEWS_SECRET"))):
         missing.append("ASKNEWS_API_KEY")
     return missing
 
@@ -224,7 +225,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--model", default=None, help="основная модель (перекрывает FORECAST_MODEL)")
     ap.add_argument("--predictions", type=int, default=None, help="прогнозов на вопрос (перекрывает FORECAST_PREDICTIONS)")
+    ap.add_argument("--research", choices=["asknews", "online", "none"], default=None,
+                    help="поиск: AskNews (по умолчанию) / веб-поиск OpenRouter :online / без поиска")
+    ap.add_argument("--report-dir", default=None, help="куда положить отчёт dry-run (по умолчанию _отчёты/ основного чекаута)")
     args = ap.parse_args(argv)
+    if args.research:
+        os.environ["FORECAST_RESEARCH"] = args.research
+    if args.report_dir:
+        os.environ["FORECAST_REPORTS_DIR"] = args.report_dir
     if args.model:
         os.environ["FORECAST_MODEL"] = args.model
     if args.predictions:

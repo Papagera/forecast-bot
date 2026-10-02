@@ -55,15 +55,32 @@ _template = _load_template_module()
 FallTemplateBot2026 = _template.FallTemplateBot2026
 
 
+RESEARCH_MODES = ("asknews", "online", "none")
+
+
+def build_researcher(mode: str, model: str) -> Any:
+    """asknews — пресет шаблона (бесплатная квота Metaculus); online — та же модель с веб-поиском
+    OpenRouter `:online` (нативный поиск провайдера, по странице ресурсов Metaculus — покрывается
+    кредитами, если не Exa); none — без поиска (шаблонная ветка `no_research`)."""
+    if mode == "asknews":
+        return ASKNEWS_PRESET
+    if mode == "online":
+        return GuardedLlm(model=f"{model}:online", temperature=0.1, timeout=180, allowed_tries=2, max_tokens=4000)
+    if mode == "none":
+        return "no_research"
+    raise ValueError(f"неизвестный режим поиска: {mode} (есть {RESEARCH_MODES})")
+
+
 def build_llms() -> dict[str, Any]:
     model = os.environ.get("FORECAST_MODEL", DEFAULT_MODEL)
     parser = os.environ.get("FORECAST_PARSER_MODEL", DEFAULT_PARSER)
+    research = os.environ.get("FORECAST_RESEARCH", "asknews")
     # max_tokens держит pre-check ai_guard per-call $0.50: 16000 × $0.020/1k = $0.32 для Opus 5.5.
     return {
         "default": GuardedLlm(model=model, temperature=0.3, timeout=180, allowed_tries=2,
                               max_tokens=int(os.environ.get("FORECAST_MAX_TOKENS", "16000"))),
         "summarizer": GuardedLlm(model=parser, temperature=0.3, timeout=60, allowed_tries=2, max_tokens=2000),
-        "researcher": ASKNEWS_PRESET,
+        "researcher": build_researcher(research, model),
         "parser": GuardedLlm(model=parser, temperature=0.3, timeout=60, allowed_tries=2, max_tokens=2000),
     }
 
