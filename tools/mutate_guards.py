@@ -59,6 +59,12 @@ SOURCE_MUTATIONS = {
     "свежие новости считаются как архив": (
         "forecast_bot.bot", "ASKNEWS_LATEST: 1}", "ASKNEWS_LATEST: 0}",
         "tests/test_run.py::test_asknews_latest_mode_costs_one_call"),
+    "лимит запуска не проверяется": (
+        "forecast_bot.guarded_llm", "        _check_run_budget()\n", "",
+        "tests/test_run.py::test_run_budget_stops_run_and_publishes_nothing_partial"),
+    "дневной потолок бота снят": (
+        "forecast_bot.ai_guard", '"forecast": {"day_usd": 3.0},', '"forecast": {"day_usd": 1e9},',
+        "tests/test_run.py::test_daily_cap_counts_earlier_runs_from_saved_ledger"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

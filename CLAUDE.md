@@ -23,6 +23,7 @@
 ## Инварианты (каждый держит тест + мутация в `tools/mutate_guards.py`)
 - Отправка — только `--mode submit` **и** `FORECAST_SUBMIT=1` в `.env`. По умолчанию dry.
 - Не дважды: флаг Metaculus `already_forecasted` + журнал (`mode='submit' AND status='ok'`); dry-строки не блокируют.
+- Деньги: `--run-budget` (Actions: $1 за запуск) + `APP_LIMITS["forecast"]` $3/сутки по леджеру.
 - Любой отказ ai_guard по бюджету → `skipped_budget`, ничего не отправлено, прогон стоп, код 0.
   RPM/TPM — не бюджет: вызов ждёт окно 61 с (до 5 раз).
 - Вызовов через гард ≠ строк в леджере → вопрос `error`, отправки нет.
@@ -36,8 +37,12 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.lock.txt \
 .venv/bin/python -m forecast_bot.run --mode dry --tournament minibench --limit 5   # dry-run
 .venv/bin/python -m forecast_bot.run --mode submit --tournament both               # боевой (после «да»)
 ```
-LaunchAgent: `deploy/com.nikita.forecast-bot.plist` (раз в 9000 с), ставит `bash deploy/install_launchagent.sh`
-— **только по слову income**. GitHub Actions не используем (общая квота минут Papagera, §4e).
+Бой — GitHub Actions `.github/workflows/forecast.yml` (репо публичный → минуты не из квоты Papagera,
+решение Никиты 02.10.2026): каждые 20 мин (окно приёма прогноза — 3 ч) + `workflow_dispatch`.
+Job идёт только при переменной репо `FORECAST_SUBMIT=1`; выключить бота — удалить переменную.
+Секреты: `METACULUS_TOKEN`, `OPENROUTER_API_KEY`, `ASKNEWS_API_KEY`. Журнал и леджер между запусками —
+`actions/cache` (`state/`); потеря кэша не ведёт к дублям: первичный признак — `my_forecasts` по API.
+LaunchAgent на маке не используется.
 
 ## Тесты
 `.venv/bin/python -m pytest -q` — офлайн (сеть в тестах закрыта, LLM/AskNews/Metaculus — фейки).

@@ -124,6 +124,62 @@ def test_budget_hit_mid_question_publishes_nothing(fake_llm, fake_asknews, monke
     assert 0 < len(fake_llm.calls) < 16
 
 
+def test_run_budget_stops_run_and_publishes_nothing_partial(fake_llm, fake_asknews):
+    """Лимит одного запуска ($1 в Actions): первый вопрос уложился, второй упёрся — стоп, без отправки."""
+    from forecast_bot import guarded_llm
+
+    # Фейк: Opus 5.5 $0.008 за вызов, ~16 вызовов на вопрос ≈ $0.06 на вопрос.
+    guarded_llm.start_run(0.08)
+    client = FakeMetaculusClient(questions())
+    result, _ = _run(client, submit=True)
+    assert [r["status"] for r in result.rows] == ["ok", "skipped_budget"]
+    assert [qid for qid, _ in client.predictions] == [201]
+    assert "лимит запуска" in result.stopped_reason
+
+
+def test_daily_cap_counts_earlier_runs_from_saved_ledger(fake_llm, fake_asknews):
+    """$3/сутки — по леджеру, который переживает запуски (в Actions — кэш state/)."""
+    conn = ai_guard._conn()
+    conn.execute('INSERT INTO usage VALUES (?,?,?,?,?,?,?)',
+                 (time.time() - 60, "openrouter", "m", "forecast:q1", 0, 0, 3.0))
+    conn.commit(); conn.close()
+    client = FakeMetaculusClient(questions())
+    result, _ = _run(client, submit=True)
+    assert [r["status"] for r in result.rows] == ["skipped_budget"] and client.predictions == []
+    assert "дневной лимит $3.0" in result.stopped_reason
+
+
+def test_summary_lists_run_without_secrets(fake_llm, fake_asknews, capsys):
+    from forecast_bot import summary
+
+    client = FakeMetaculusClient(questions()[:2])
+    _run(client, submit=True)
+    out = summary.render(time.time() - 600)
+    assert "отправлено: 2" in out and "Будет ли X?" in out
+    for secret in ("fake-metaculus", "fake-openrouter", "fake-asknews"):
+        assert secret not in out
+
+
+def test_workflow_gates_and_limits():
+    """Workflow: job только при FORECAST_SUBMIT=1, лимит запуска $1, Gemini ×1, AskNews свежие, без наслоения."""
+    from pathlib import Path
+
+    import yaml
+
+    wf = yaml.safe_load((Path(__file__).resolve().parent.parent / ".github/workflows/forecast.yml").read_text())
+    job = wf["jobs"]["forecast"]
+    assert job["if"] == "vars.FORECAST_SUBMIT == '1'" and job["timeout-minutes"] == 15
+    assert wf["concurrency"] == {"group": "forecast", "cancel-in-progress": False}
+    assert wf["permissions"] == {"contents": "read"}
+    on = wf[True] if True in wf else wf["on"]  # YAML 1.1 читает ключ on как True
+    assert on["schedule"] == [{"cron": "*/20 * * * *"}] and "workflow_dispatch" in on
+    cmd = next(s["run"] for s in job["steps"] if s.get("name") == "Прогноз и отправка")
+    for part in ("--mode submit", "--tournament both", "openrouter/google/gemini-3.5-flash",
+                 "--predictions 1", "--research asknews-latest", "--run-budget 1.0"):
+        assert part in cmd
+    assert all(v.startswith("${{ secrets.") for k, v in job["env"].items() if k.endswith(("_TOKEN", "_KEY")))
+
+
 def test_every_llm_call_lands_in_ledger(fake_llm, fake_asknews):
     client = FakeMetaculusClient(questions()[:2])
     result, _ = _run(client, submit=False)

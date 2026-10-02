@@ -229,6 +229,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--predictions", type=int, default=None, help="прогнозов на вопрос (перекрывает FORECAST_PREDICTIONS)")
     ap.add_argument("--research", choices=["asknews", "asknews-latest", "online", "none"], default=None,
                     help="поиск: AskNews свежие+архив (6 вызовов) / только свежие (1) / OpenRouter :online / без поиска")
+    ap.add_argument("--run-budget", type=float, default=None, help="лимит $ на один запуск (Actions: 1.0)")
     ap.add_argument("--report-dir", default=None, help="куда положить отчёт dry-run (по умолчанию _отчёты/ основного чекаута)")
     args = ap.parse_args(argv)
     if args.research:
@@ -262,8 +263,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             return 0
         from forecasting_tools import MetaculusClient
 
+        from forecast_bot import guarded_llm
         from forecast_bot.bot import ForecastBot
         from forecast_bot.journal import Journal
+
+        guarded_llm.start_run(args.run_budget)
 
         result = asyncio.run(run(client=MetaculusClient(), bot=ForecastBot(), journal=Journal(paths.journal_db()),
                                  tournaments=[TOURNAMENTS.get(n, TEST_TOURNAMENT) for n in names], submit=submit, limit=args.limit))
