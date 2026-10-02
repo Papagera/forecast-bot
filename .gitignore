@@ -8,3 +8,7 @@ node_modules/
 *.db-wal
 *.db-shm
 .DS_Store
+data/
+.claude/worktrees/
+.pytest_cache/
+*.egg-info/
