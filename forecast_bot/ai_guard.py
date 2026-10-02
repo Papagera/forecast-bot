@@ -482,6 +482,17 @@ def spent_by_user(user: str, since: float) -> tuple[float, int]:
         conn.close()
 
 
+def app_cost_since(app: str, since: float) -> float:
+    """Сколько $ приложение потратило с момента `since` (лимит одного запуска бота)."""
+    conn = _conn()
+    try:
+        return float(conn.execute(
+            'SELECT COALESCE(SUM(cost_usd),0) s FROM usage WHERE "user" LIKE ? AND ts >= ?', (f"{app}:%", since)
+        ).fetchone()["s"])
+    finally:
+        conn.close()
+
+
 def count_app_calls(app: str, since: float) -> int:
     conn = _conn()
     try:

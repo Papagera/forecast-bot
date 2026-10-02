@@ -1,0 +1,77 @@
+# Боевой прогон бота: каждые 20 мин (окно приёма прогноза в турнирах — 3 ч) + ручной запуск.
+# Репо публичный → минуты Actions не тратят квоту Papagera (решение Никиты 02.10.2026).
+#
+# Предохранители:
+# - job выполняется ТОЛЬКО при переменной репозитория FORECAST_SUBMIT=1 (Settings → Variables);
+#   без неё прогон пропускается целиком, ни одного платного вызова. Выключить бота = удалить переменную.
+# - раннер сам проверяет второй ключ: --mode submit И env FORECAST_SUBMIT=1 (forecast_bot/run.py).
+# - «не дважды»: my_forecasts бот-аккаунта по API Metaculus (первично) + журнал из кэша (вторично).
+# - деньги: $1 за запуск (--run-budget), $3 в сутки по леджеру ai_guard из кэша (APP_LIMITS["forecast"]);
+#   кэш потерян → остаётся лимит запуска, страховка — лимит $50 на самом ключе OpenRouter.
+name: forecast
+
+on:
+  schedule:
+    - cron: "*/20 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: forecast
+  cancel-in-progress: false
+
+jobs:
+  forecast:
+    if: vars.FORECAST_SUBMIT == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      METACULUS_TOKEN: ${{ secrets.METACULUS_TOKEN }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      ASKNEWS_API_KEY: ${{ secrets.ASKNEWS_API_KEY }}
+      FORECAST_SUBMIT: ${{ vars.FORECAST_SUBMIT }}
+      # Состояние между запусками (журнал, леджер, лок) — в state/, сохраняется actions/cache.
+      FORECAST_DATA_DIR: ${{ github.workspace }}/state
+      FORECAST_STATE_DIR: ${{ github.workspace }}/state
+      FORECAST_REPORTS_DIR: ${{ github.workspace }}/state/reports
+      AI_LEDGER_PATH: ${{ github.workspace }}/state/ai_ledger.db
+      FORECAST_ENV_FILE: ${{ github.workspace }}/.env.absent
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.lock.txt
+
+      - name: Зависимости (пины + вендоренная forecasting-tools)
+        run: |
+          pip install -r requirements.lock.txt
+          pip install --no-deps -e vendor/forecasting-tools-0.3.2
+
+      - name: Восстановить состояние (журнал + леджер)
+        uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: forecast-state-${{ github.run_id }}
+          restore-keys: forecast-state-
+
+      - name: Прогноз и отправка
+        run: >
+          python -m forecast_bot.run --mode submit --tournament both
+          --model openrouter/google/gemini-3.5-flash --predictions 1
+          --research asknews-latest --run-budget 1.0
+
+      - name: Итог запуска
+        if: always()
+        run: python -m forecast_bot.summary --since-minutes 30 >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Сохранить состояние
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state
+          key: forecast-state-${{ github.run_id }}-${{ github.run_attempt }}

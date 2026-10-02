@@ -46,6 +46,28 @@ RATE_WAIT_S = 61.0
 RATE_WAIT_TRIES = 5
 
 
+# Лимит одного запуска (Actions: $1 за прогон, указание income 02.10.2026). None — без лимита.
+# Сутки ($3) держит APP_LIMITS["forecast"] в ai_guard по сохранённому леджеру.
+RUN_BUDGET_USD: float | None = None
+RUN_STARTED_AT: float = 0.0
+
+
+def start_run(budget_usd: float | None) -> None:
+    global RUN_BUDGET_USD, RUN_STARTED_AT
+    import time
+
+    RUN_BUDGET_USD = budget_usd
+    RUN_STARTED_AT = time.time()
+
+
+def _check_run_budget() -> None:
+    if RUN_BUDGET_USD is None:
+        return
+    spent = ai_guard.app_cost_since(APP, RUN_STARTED_AT)
+    if spent >= RUN_BUDGET_USD:
+        raise BudgetExceeded(f"лимит запуска ${RUN_BUDGET_USD} исчерпан (потрачено ${spent:.4f})")
+
+
 class UnguardedLlmCall(RuntimeError):
     """LLM позвали мимо ai_guard — вызов отклонён до сети."""
 
@@ -129,6 +151,7 @@ class GuardedLlm(GeneralLlm):
             )
             return resp, usage
 
+        _check_run_budget()
         provider = provider_for(self.model)
         result = await ai_guard.acall(
             provider, self.model, fn,

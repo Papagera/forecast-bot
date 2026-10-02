@@ -40,7 +40,10 @@ def offline_env(tmp_path, monkeypatch):
     from forecast_bot import ai_guard, guarded_llm
 
     monkeypatch.setattr(guarded_llm, "RETRY_BACKOFF_S", [0.0])
-    monkeypatch.setitem(ai_guard.APP_LIMITS, "forecast", {"day_usd": 3.0})
+    monkeypatch.setattr(guarded_llm, "RUN_BUDGET_USD", None)
+    monkeypatch.setattr(guarded_llm, "RUN_STARTED_AT", 0.0)
+    # APP_LIMITS["forecast"] НЕ подменяем: суточный потолок проверяется по значению из кода
+    # (мутация «дневной потолок бота снят» была слепой, пока conftest подставлял $3 сам).
     monkeypatch.setitem(ai_guard.LIMITS, "per_user_day_calls", 20)
     # Фейк отвечает мгновенно: 4 вопроса × 16 вызовов за секунду упёрлись бы в RPM 30 машины.
     # Поведение при RPM проверяет отдельный тест (test_guard.py::test_rpm_waits_for_window).
