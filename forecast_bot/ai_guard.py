@@ -6,7 +6,8 @@
 #   1. `acall()` — async-вход для forecasting-tools (там всё на asyncio). Порядок и проверки те же,
 #      что у `call()`: kill-switch → breaker → `_precheck` → вызов → `_record` по факту токенов.
 #   2. Цены OpenRouter-моделей бота (openrouter.ai/api/v1/models, 02.10.2026, $/1M → $/1k).
-#   3. APP_LIMITS["forecast"] = $3/день — потолок бота внутри общего лимита машины (income, 02.10.2026).
+#   3. APP_LIMITS["forecast"] — потолок бота внутри общего лимита машины: $3/день (02.10.2026),
+#      $6/день с 03.10.2026 (блок 2.1, указание income «под выбранный вариант с запасом ×2»).
 #   6. TokenUsage.actual_cost_usd — фактическая стоимость из ответа (OpenRouter usage.cost);
 #      если провайдер её не дал (0/None) — расчёт по PRICES, как в оригинале.
 #   4. LIMITS day/month = $50/$500 — канон §4b EZCAR_SHARED_RULES (с 21.08.2026,
@@ -65,7 +66,9 @@ PROVIDER_LIMITS = {
 
 APP_LIMITS = {
     # forecast-bot (личное, вне EZCAR): потолок $3/день — указание income 02.10.2026.
-    "forecast": {"day_usd": 3.0},
+    # Блок 2.1 (03.10.2026): под вариант B ($0.052/вопрос) с запасом ×2 на пиковый день MiniBench
+    # (до 49 вопросов в день по каталогу 12 раундов) + Fall: 55 × 0.052 × 2 ≈ $5.7 → $6. Было $3.
+    "forecast": {"day_usd": 6.0},
     # Замеры вариантов на Mac (блок 2.1, income 03.10.2026): 4 варианта × ~16 вопросов ≈ $5 (≈оценка).
     "forecast-lab": {"day_usd": 8.0},
 }

@@ -63,7 +63,7 @@ SOURCE_MUTATIONS = {
         "forecast_bot.guarded_llm", "        _check_run_budget()\n", "",
         "tests/test_run.py::test_run_budget_stops_run_and_publishes_nothing_partial"),
     "дневной потолок бота снят": (
-        "forecast_bot.ai_guard", '"forecast": {"day_usd": 3.0},', '"forecast": {"day_usd": 1e9},',
+        "forecast_bot.ai_guard", '"forecast": {"day_usd": 6.0},', '"forecast": {"day_usd": 1e9},',
         "tests/test_run.py::test_daily_cap_counts_earlier_runs_from_saved_ledger"),
     "агент: новости без лимита": (
         "forecast_bot.agent", "if self.news is None or self.news_calls >= self.max_news:", "if self.news is None:",

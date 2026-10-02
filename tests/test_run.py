@@ -138,15 +138,15 @@ def test_run_budget_stops_run_and_publishes_nothing_partial(fake_llm, fake_askne
 
 
 def test_daily_cap_counts_earlier_runs_from_saved_ledger(fake_llm, fake_asknews):
-    """$3/сутки — по леджеру, который переживает запуски (в Actions — кэш state/)."""
+    """$6/сутки (с 03.10.2026) — по леджеру, который переживает запуски (в Actions — кэш state/)."""
     conn = ai_guard._conn()
     conn.execute('INSERT INTO usage VALUES (?,?,?,?,?,?,?)',
-                 (time.time() - 60, "openrouter", "m", "forecast:q1", 0, 0, 3.0))
+                 (time.time() - 60, "openrouter", "m", "forecast:q1", 0, 0, 6.0))
     conn.commit(); conn.close()
     client = FakeMetaculusClient(questions())
     result, _ = _run(client, submit=True)
     assert [r["status"] for r in result.rows] == ["skipped_budget"] and client.predictions == []
-    assert "дневной лимит $3.0" in result.stopped_reason
+    assert "дневной лимит $6.0" in result.stopped_reason
 
 
 def test_summary_lists_run_without_secrets(fake_llm, fake_asknews, capsys):
@@ -228,6 +228,29 @@ def test_cli_model_and_predictions_reach_bot(monkeypatch):
     monkeypatch.setattr(R, "run", fake_run)
     assert R.main(["--model", "openrouter/google/gemini-3.5-flash", "--predictions", "1"]) == 0
     assert seen == {"model": "openrouter/google/gemini-3.5-flash", "n": 1}
+
+
+def test_cli_variant_b_flags(monkeypatch):
+    """Вариант B одной строкой: агент на Haiku, итог Opus high, ≤2 поиска AskNews."""
+    import os
+
+    seen = {}
+
+    async def fake_run(**k):
+        bot = k["bot"]
+        seen.update(model=bot.get_llm("default", "llm").model, research=bot.get_llm("researcher"),
+                    news=bot.asknews_calls_per_research, agent=os.environ.get("FORECAST_AGENT_MODEL"),
+                    effort=bot.get_llm("default", "llm").litellm_kwargs.get("reasoning_effort"))
+        return R.RunResult(run_id="t", submit=False)
+
+    monkeypatch.setattr(R, "run", fake_run)
+    for k in ("FORECAST_AGENT_MODEL", "FORECAST_AGENT_MAX_NEWS", "FORECAST_REASONING", "FORECAST_RESEARCH"):
+        monkeypatch.delenv(k, raising=False)
+    assert R.main(["--research", "agent", "--agent-model", "openrouter/anthropic/claude-haiku-4.5",
+                   "--agent-max-news", "2", "--model", "openrouter/anthropic/claude-opus-5.5",
+                   "--reasoning", "high", "--predictions", "1"]) == 0
+    assert seen == {"model": "openrouter/anthropic/claude-opus-5.5", "research": "agent", "news": 2,
+                    "agent": "openrouter/anthropic/claude-haiku-4.5", "effort": "high"}
 
 
 def test_every_default_model_has_a_price():

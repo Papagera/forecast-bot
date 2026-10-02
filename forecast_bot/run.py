@@ -249,6 +249,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--model", default=None, help="основная модель (перекрывает FORECAST_MODEL)")
     ap.add_argument("--predictions", type=int, default=None, help="прогнозов на вопрос (перекрывает FORECAST_PREDICTIONS)")
+    ap.add_argument("--agent-model", default=None, help="модель агента-исследователя (перекрывает FORECAST_AGENT_MODEL)")
+    ap.add_argument("--agent-max-news", type=int, default=None, help="поисков AskNews агенту на вопрос (по умолчанию 3)")
     ap.add_argument("--reasoning", choices=["low", "medium", "high"], default=None,
                     help="reasoning_effort основной модели (перекрывает FORECAST_REASONING)")
     ap.add_argument("--research", choices=["asknews", "asknews-latest", "online", "none", "agent"], default=None,
@@ -260,6 +262,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         os.environ["FORECAST_RESEARCH"] = args.research
     if args.reasoning:
         os.environ["FORECAST_REASONING"] = args.reasoning
+    if args.agent_model:
+        os.environ["FORECAST_AGENT_MODEL"] = args.agent_model
+    if args.agent_max_news is not None:
+        os.environ["FORECAST_AGENT_MAX_NEWS"] = str(args.agent_max_news)
     if args.report_dir:
         os.environ["FORECAST_REPORTS_DIR"] = args.report_dir
     if args.model:
