@@ -96,6 +96,21 @@ SOURCE_MUTATIONS = {
     "приложение без потолка разрешено": (
         "forecast_bot.guarded_llm", "if app not in ai_guard.APP_LIMITS:", "if False:",
         "tests/test_guard.py::test_unknown_app_name_refused"),
+    "цикл: лимит опроса не обнуляется": (
+        "forecast_bot.run", "            guarded_llm.start_run(run_budget)\n            stats.polls += 1",
+        "            stats.polls += 1", "tests/test_loop.py::test_run_budget_reset_on_every_poll"),
+    "цикл: суточный потолок не проверяется": (
+        "forecast_bot.run", "if cap is not None and day_spent() >= cap:", "if False:",
+        "tests/test_loop.py::test_day_cap_skips_polls_without_touching_metaculus"),
+    "цикл: ошибка опроса роняет цикл": (
+        "forecast_bot.run", "except Exception as exc:  # сеть/API", "except ZeroDivisionError as exc:  # сеть/API",
+        "tests/test_loop.py::test_exception_in_poll_does_not_stop_loop"),
+    "цикл: выходит за окно": (
+        "forecast_bot.run", "if clock() + poll_s >= deadline:", "if clock() >= deadline + 10 * poll_s:",
+        "tests/test_loop.py::test_polls_every_interval_until_window_ends"),
+    "цикл: новые вопросы после срока": (
+        "forecast_bot.run", "if stop_at is not None and time.time() > stop_at:", "if False:",
+        "tests/test_loop.py::test_stop_at_does_not_start_new_questions"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

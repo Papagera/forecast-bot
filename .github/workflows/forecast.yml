@@ -1,22 +1,30 @@
-# Боевой прогон бота: каждые 20 мин (окно приёма прогноза в турнирах — 3 ч) + ручной запуск.
+# Боевой бот: один job крутит цикл опроса ~5 ч 35 мин (каждые 10 мин), в конце перезапускает сам себя.
+# Почему так: окно приёма прогноза в турнирах — 3 ч, а cron */20 за 9+ часов сработал 2 раза (00:08 и 05:24 UTC,
+# 02–03.10.2026) — GitHub не гарантирует расписание. Cron раз в час оставлен страховкой, если цепочка оборвётся.
 # Репо публичный → минуты Actions не тратят квоту Papagera (решение Никиты 02.10.2026).
+# Лимиты GitHub (docs.github.com/en/actions/reference/limits): job ≤ 6 ч, Free — до 20 одновременных job; у нас 1.
 #
 # Предохранители:
 # - job выполняется ТОЛЬКО при переменной репозитория FORECAST_SUBMIT=1 (Settings → Variables);
-#   без неё прогон пропускается целиком, ни одного платного вызова. Выключить бота = удалить переменную.
+#   без неё job пропускается целиком и сам себя не перезапускает. Выключить бота = удалить переменную.
+#   Ручная отмена прогона (Cancel) тоже обрывает цепочку: перезапуск только при success/failure.
 # - раннер сам проверяет второй ключ: --mode submit И env FORECAST_SUBMIT=1 (forecast_bot/run.py).
 # - «не дважды»: my_forecasts бот-аккаунта по API Metaculus (первично) + журнал из кэша (вторично).
-# - деньги: $1 за запуск (--run-budget), $3 в сутки по леджеру ai_guard из кэша (APP_LIMITS["forecast"]);
-#   кэш потерян → остаётся лимит запуска, страховка — лимит $50 на самом ключе OpenRouter.
+# - деньги: $1 на каждый опрос (--run-budget) + $6 в сутки по леджеру ai_guard (APP_LIMITS["forecast"]),
+#   суточный потолок проверяется перед каждым опросом и на каждом вызове модели;
+#   кэш потерян → остаётся лимит опроса, страховка — лимит $50 на самом ключе OpenRouter.
+# - concurrency: два цикла одновременно не идут. Новый запуск (cron/перезапуск), пока цикл идёт, встаёт в очередь
+#   и ждёт; GitHub держит в очереди один ожидающий и заменяет его более свежим — дублей не копится.
 name: forecast
 
 on:
   schedule:
-    - cron: "*/20 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: write   # перезапуск себя через `gh workflow run` (workflow_dispatch от GITHUB_TOKEN разрешён)
 
 concurrency:
   group: forecast
@@ -26,13 +34,13 @@ jobs:
   forecast:
     if: vars.FORECAST_SUBMIT == '1'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 350
     env:
       METACULUS_TOKEN: ${{ secrets.METACULUS_TOKEN }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       ASKNEWS_API_KEY: ${{ secrets.ASKNEWS_API_KEY }}
       FORECAST_SUBMIT: ${{ vars.FORECAST_SUBMIT }}
-      # Состояние между запусками (журнал, леджер, лок) — в state/, сохраняется actions/cache.
+      # Состояние между запусками (журнал, леджер, лок, статистика цикла) — в state/, сохраняется actions/cache.
       FORECAST_DATA_DIR: ${{ github.workspace }}/state
       FORECAST_STATE_DIR: ${{ github.workspace }}/state
       FORECAST_REPORTS_DIR: ${{ github.workspace }}/state/reports
@@ -59,15 +67,17 @@ jobs:
           key: forecast-state-${{ github.run_id }}
           restore-keys: forecast-state-
 
-      - name: Прогноз и отправка
+      # Вариант B (блок 2.1): исследует Haiku 4.5 с проверкой чисел по источникам, решает Opus 5.5 high.
+      - name: Цикл прогнозов и отправки
         run: >
           python -m forecast_bot.run --mode submit --tournament both
-          --model openrouter/google/gemini-3.5-flash --predictions 1
-          --research asknews-latest --run-budget 1.0
+          --research agent --agent-model openrouter/anthropic/claude-haiku-4.5 --agent-max-news 2
+          --model openrouter/anthropic/claude-opus-5.5 --reasoning high --predictions 1 --run-budget 1.0
+          --loop-minutes 335 --poll-minutes 10
 
-      - name: Итог запуска
+      - name: Итог цикла
         if: always()
-        run: python -m forecast_bot.summary --since-minutes 30 >> "$GITHUB_STEP_SUMMARY"
+        run: python -m forecast_bot.summary --since-minutes 360 >> "$GITHUB_STEP_SUMMARY"
 
       - name: Сохранить состояние
         if: always()
@@ -75,3 +85,9 @@ jobs:
         with:
           path: state
           key: forecast-state-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Перезапустить цикл
+        if: success() || failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run forecast.yml --repo "${{ github.repository }}" --ref "${{ github.ref_name }}"
