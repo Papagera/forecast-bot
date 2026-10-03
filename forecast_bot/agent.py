@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from forecast_bot import ai_guard, guarded_llm
+from forecast_bot import ai_guard, guarded_llm, verify
 
 MAX_STEPS = 6
 MAX_NEWS_CALLS = 3          # AskNews «свежие» = 1 вызов каждый (квота)
@@ -55,8 +55,14 @@ for the question: current status, the most recent relevant data points, base rat
 events before the resolution date, and how the resolution source will measure the outcome. For questions about a
 data series (economic indicators, prices, counts), fetch the series itself and report its latest value, recent
 trend and typical volatility over a horizon like the question's. Be efficient: at most {steps} tool rounds.
-Do NOT give a final probability. Finish with a concise research brief (<= 500 words): key facts with dates and
-sources, base rates, the status quo outcome, and the main uncertainties."""
+Do NOT give a final probability. Finish with a concise research brief (<= 500 words): key facts with dates,
+base rates, the status quo outcome, and the main uncertainties.
+
+SOURCES RULE (strict): every tool result is labelled with a source id like [S3]; the question itself is [S0].
+Write the brief as one fact per line. Every line that contains a number MUST end with the id(s) of the source(s)
+where that exact number appears, e.g. "- Unemployment was 4.2% in August 2026 [S2]". Copy numbers exactly as
+written in the source. Never estimate, round, convert units or recall numbers from memory: a number that does not
+literally appear in a cited source will be deleted together with its line. Facts without numbers need no id."""
 
 
 # ─────────────────────────── инструменты ────────────────────────────
@@ -146,12 +152,16 @@ def stock_history(symbol: str) -> str:
 class ResearchAgent:
     def __init__(self, model: str, *, question_budget_usd: float = 0.30,
                  news: Callable[[str], Awaitable[str]] | None = None,
-                 max_tokens: int = 4000) -> None:
+                 max_tokens: int = 4000, max_news: int = MAX_NEWS_CALLS) -> None:
         self.model = model
+        self.max_news = max_news
         self.question_budget_usd = question_budget_usd
         self.news = news
         self.max_tokens = max_tokens
         self.news_calls = 0
+        self.sources: dict[str, str] = {}
+        self.raw_brief = ""
+        self.verdict: verify.Verdict | None = None
 
     def _spent(self, since: float) -> float:
         user = f"{guarded_llm.APP}:{guarded_llm.CURRENT_USER.get()}"
@@ -159,7 +169,7 @@ class ResearchAgent:
 
     async def _run_tool(self, name: str, args: dict) -> str:
         if name == "search_news":
-            if self.news is None or self.news_calls >= MAX_NEWS_CALLS:
+            if self.news is None or self.news_calls >= self.max_news:
                 return "Поиск новостей недоступен (исчерпан лимит вызовов на вопрос)."
             self.news_calls += 1
             return _clip(await self.news(str(args.get("query", ""))[:300]))
@@ -172,6 +182,18 @@ class ResearchAgent:
         return f"Неизвестный инструмент {name}."
 
     async def research(self, question: Any) -> str:
+        """Справка, прошедшая сверку чисел (`verify.check`); сырой текст — в `self.raw_brief`."""
+        self.raw_brief = await self._loop(question)
+        self.verdict = verify.check(self.raw_brief, self.sources)
+        return self.verdict.text
+
+    def _label(self, name: str, args: dict, result: str) -> str:
+        sid = f"S{len(self.sources)}"
+        self.sources[sid] = result
+        detail = args.get("url") or args.get("query") or args.get("series_id") or args.get("symbol") or ""
+        return f"[{sid}] source: {name} {detail}\n{result}"
+
+    async def _loop(self, question: Any) -> str:
         t0 = time.time()
         self.news_calls = 0
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -179,8 +201,9 @@ class ResearchAgent:
                     f"Resolution criteria: {question.resolution_criteria}\n\nFine print: {question.fine_print}\n\n"
                     f"Background: {question.background_info}\n\nQuestion closes: {question.close_time}; "
                     f"resolves: {question.scheduled_resolution_time}.")
+        self.sources = {"S0": user_msg}
         messages: list[dict] = [{"role": "system", "content": SYSTEM.format(steps=MAX_STEPS)},
-                                {"role": "user", "content": user_msg}]
+                                {"role": "user", "content": "[S0] question\n" + user_msg}]
         for step in range(MAX_STEPS + 1):
             over_budget = self._spent(t0) >= SOFT_STOP_SHARE * self.question_budget_usd
             last = step == MAX_STEPS or over_budget
@@ -204,5 +227,6 @@ class ResearchAgent:
                 except json.JSONDecodeError:
                     args = {}
                 result = await self._run_tool(c.function.name, args)
-                messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
+                messages.append({"role": "tool", "tool_call_id": c.id,
+                                 "content": self._label(c.function.name, args, result)})
         return "Исследование не завершено."

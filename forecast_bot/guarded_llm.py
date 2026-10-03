@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import os
 from collections import Counter
 from typing import Any, Callable
 
@@ -22,7 +23,16 @@ from forecasting_tools.ai_models import general_llm as _gl
 from forecast_bot import ai_guard
 from forecast_bot.ai_guard import AIGuardError, BudgetExceeded, TokenUsage
 
-APP = "forecast"
+# Приложение в леджере: "forecast" — бой, "forecast-lab" — замеры вариантов (свой суточный потолок).
+# Неизвестное имя запрещено: у него не было бы лимита в APP_LIMITS, то есть это обход потолка.
+def _resolve_app(name: str | None) -> str:
+    app = (name or "").strip() or "forecast"
+    if app not in ai_guard.APP_LIMITS:
+        raise RuntimeError(f"FORECAST_APP={app!r}: нет потолка в ai_guard.APP_LIMITS — запуск запрещён")
+    return app
+
+
+APP = _resolve_app(os.environ.get("FORECAST_APP"))
 
 # Кому списывать вызов в леджере: "q<id вопроса>" (ставит раннер на время вопроса).
 CURRENT_USER: contextvars.ContextVar[str] = contextvars.ContextVar("forecast_user", default="run")

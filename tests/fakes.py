@@ -86,6 +86,7 @@ class FakeLlm:
         self.billed_cost = billed_cost  # как OpenRouter usage.cost (litellm кладёт в _hidden_params)
         self.kwargs: list[dict] = []
         self.tool_plan = ["search_news", "fred_series"]  # что «агент» вызовет по шагам
+        self.hallucinate = False  # добавить в справку выдуманное число
 
     async def __call__(self, *args: Any, messages: list | None = None, model: str = "", **kwargs: Any) -> ModelResponse:
         text = str(messages[-1]["content"]) if messages else ""
@@ -114,8 +115,17 @@ class FakeLlm:
                 {"id": f"c{done}", "type": "function", "function": {"name": name, "arguments": arg}}]}
             return ModelResponse(model=model, choices=[{"index": 0, "finish_reason": "tool_calls", "message": msg}],
                                  usage=usage)
-        brief = "Справка агента: событие ещё не произошло. " + " | ".join(
-            str(m.get("content"))[:60] for m in messages if m.get("role") == "tool")
+        # Справка по правилу источников: строка-факт на каждый ответ инструмента с его [S#];
+        # при hallucinate — ещё строка с числом, которого нет ни в одном источнике.
+        lines = ["Справка агента: событие ещё не произошло."]
+        for m in messages:
+            if m.get("role") == "tool":
+                head, _, body = str(m.get("content")).partition("\n")
+                sid = head.split("]")[0].lstrip("[")
+                lines.append(f"- {body[:60]} [{sid}]")
+        if self.hallucinate:
+            lines.append("- Рост составил 77.7% за квартал [S1]")
+        brief = "\n".join(lines)
         return ModelResponse(model=model, usage=usage, choices=[
             {"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": brief}}])
 

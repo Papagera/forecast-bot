@@ -40,6 +40,15 @@ CREATE INDEX IF NOT EXISTS idx_forecasts_q ON forecasts(question_id);
 CREATE INDEX IF NOT EXISTS idx_forecasts_created ON forecasts(created_at);
 """
 
+EXTRA_COLUMNS = (
+    ("research_numbers", "INTEGER"),      # чисел в справке исследования
+    ("research_unverified", "INTEGER"),   # из них не нашлось в процитированных источниках (факт отброшен)
+    ("research_dropped", "TEXT"),         # отброшенные строки — для ручного разбора
+    ("forecast_numbers", "INTEGER"),      # чисел в рассуждении прогнозиста
+    ("forecast_unverified", "INTEGER"),   # из них нет ни в исследовании, ни в вопросе
+    ("variant", "TEXT"),                  # метка варианта замера (блок 2.1)
+)
+
 # Статусы строки.
 OK = "ok"
 ERROR = "error"
@@ -53,6 +62,12 @@ class Journal:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as c:
             c.executescript(SCHEMA)
+            # Колонки блока 2.1 (сверка чисел). CREATE TABLE IF NOT EXISTS их в старую базу не добавит.
+            for col, typ in EXTRA_COLUMNS:
+                try:
+                    c.execute(f"ALTER TABLE forecasts ADD COLUMN {col} {typ}")
+                except sqlite3.OperationalError:
+                    pass
 
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=10)

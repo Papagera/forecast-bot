@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -132,6 +134,19 @@ def test_load_env_file_does_not_override(tmp_path, monkeypatch):
 
     assert os.environ["METACULUS_TOKEN"] == "fake-metaculus" and os.environ["NEW_KEY_X"] == "v"
     monkeypatch.delenv("NEW_KEY_X")
+
+
+def test_unknown_app_name_refused():
+    """FORECAST_APP без потолка в APP_LIMITS = обход суточного лимита → отказ."""
+    with pytest.raises(RuntimeError, match="нет потолка"):
+        guarded_llm._resolve_app("nolimit")
+    assert guarded_llm._resolve_app("forecast-lab") == "forecast-lab"
+    assert guarded_llm._resolve_app(None) == guarded_llm._resolve_app("") == "forecast"
+    # и на импорте модуля: процесс с чужим именем не стартует
+    r = subprocess.run([sys.executable, "-c", "import forecast_bot.guarded_llm"],
+                       cwd=Path(__file__).resolve().parent.parent,
+                       env={**os.environ, "FORECAST_APP": "nolimit"}, capture_output=True, text=True)
+    assert r.returncode != 0 and "нет потолка" in r.stderr
 
 
 def test_provider_billed_cost_goes_to_ledger(fake_llm):

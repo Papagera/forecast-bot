@@ -112,6 +112,7 @@ class ForecastBot(FallTemplateBot2026):
         kwargs["skip_previously_forecasted_questions"] = False
         super().__init__(**kwargs)
         self.asknews_calls: Counter[int] = Counter()
+        self.research_stats: dict[int, dict] = {}  # сверка чисел исследования агента (verify.check)
         # У шаблона семафор — атрибут класса, привязывается к первому event loop; второй
         # asyncio.run в том же процессе (тесты) упал бы «bound to a different event loop».
         self._concurrency_limiter = asyncio.Semaphore(self._max_concurrent_questions)
@@ -121,7 +122,8 @@ class ForecastBot(FallTemplateBot2026):
         researcher = self.get_llm("researcher")
         if researcher == AGENT_RESEARCHER:
             from forecast_bot.agent import MAX_NEWS_CALLS
-            return MAX_NEWS_CALLS  # верхняя граница — для проверки месячного потолка
+            # верхняя граница — для проверки месячного потолка
+            return int(os.environ.get("FORECAST_AGENT_MAX_NEWS", MAX_NEWS_CALLS))
         return ASKNEWS_CALLS.get(researcher, 0) if isinstance(researcher, str) else 0
 
     async def run_research(self, question: Any) -> str:
@@ -143,12 +145,19 @@ class ForecastBot(FallTemplateBot2026):
             os.environ.get("FORECAST_AGENT_MODEL", os.environ.get("FORECAST_MODEL", DEFAULT_MODEL)),
             question_budget_usd=float(os.environ.get("FORECAST_QUESTION_BUDGET", "0.30")),
             news=self._asknews_latest,
+            max_news=self.asknews_calls_per_research,
         )
         async with self._concurrency_limiter:
             try:
                 return await agent.research(question)
             finally:
                 self.asknews_calls[question.id_of_question] += agent.news_calls
+                if agent.verdict is not None:
+                    self.research_stats[question.id_of_question] = {
+                        "research_numbers": agent.verdict.numbers_total,
+                        "research_unverified": agent.verdict.numbers_unverified,
+                        "research_dropped": "\n".join(agent.verdict.dropped)[:4000],
+                    }
 
     async def _asknews_latest(self, query: str) -> str:
         """Один запрос AskNews «latest news» (48 ч) — та же разметка, что у пресета шаблона
