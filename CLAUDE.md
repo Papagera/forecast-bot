@@ -41,8 +41,11 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.lock.txt \
 .venv/bin/python -m forecast_bot.run --mode submit --tournament both               # боевой (после «да»)
 ```
 Бой — GitHub Actions `.github/workflows/forecast.yml` (репо публичный → минуты не из квоты Papagera,
-решение Никиты 02.10.2026): каждые 20 мин (окно приёма прогноза — 3 ч) + `workflow_dispatch`.
-Job идёт только при переменной репо `FORECAST_SUBMIT=1`; выключить бота — удалить переменную.
+решение Никиты 02.10.2026). Окно приёма прогноза — 3 ч, а cron GitHub ненадёжен (*/20 сработал 2 раза за 9 ч),
+поэтому один job крутит цикл `--loop-minutes 335 --poll-minutes 10` (timeout 350) и в конце перезапускает себя
+`gh workflow run` (GITHUB_TOKEN, `actions: write`); cron раз в час — страховка. Вариант B (блок 2.1).
+Job идёт только при переменной репо `FORECAST_SUBMIT=1`; выключить бота — удалить переменную (или Cancel прогона:
+перезапуск только при success/failure).
 Секреты: `METACULUS_TOKEN`, `OPENROUTER_API_KEY`, `ASKNEWS_API_KEY`. Журнал и леджер между запусками —
 `actions/cache` (`state/`); потеря кэша не ведёт к дублям: первичный признак — `my_forecasts` по API.
 LaunchAgent на маке не используется.

@@ -161,22 +161,32 @@ def test_summary_lists_run_without_secrets(fake_llm, fake_asknews, capsys):
 
 
 def test_workflow_gates_and_limits():
-    """Workflow: job только при FORECAST_SUBMIT=1, лимит запуска $1, Gemini ×1, AskNews свежие, без наслоения."""
+    """Workflow (блок 2.2): цикл в одном job, вариант B, перезапуск себя, cron-страховка раз в час, без наслоения."""
     from pathlib import Path
 
     import yaml
 
     wf = yaml.safe_load((Path(__file__).resolve().parent.parent / ".github/workflows/forecast.yml").read_text())
     job = wf["jobs"]["forecast"]
-    assert job["if"] == "vars.FORECAST_SUBMIT == '1'" and job["timeout-minutes"] == 15
+    assert job["if"] == "vars.FORECAST_SUBMIT == '1'" and job["timeout-minutes"] == 350
     assert wf["concurrency"] == {"group": "forecast", "cancel-in-progress": False}
-    assert wf["permissions"] == {"contents": "read"}
+    assert wf["permissions"] == {"contents": "read", "actions": "write"}
     on = wf[True] if True in wf else wf["on"]  # YAML 1.1 читает ключ on как True
-    assert on["schedule"] == [{"cron": "*/20 * * * *"}] and "workflow_dispatch" in on
-    cmd = next(s["run"] for s in job["steps"] if s.get("name") == "Прогноз и отправка")
-    for part in ("--mode submit", "--tournament both", "openrouter/google/gemini-3.5-flash",
-                 "--predictions 1", "--research asknews-latest", "--run-budget 1.0"):
+    assert on["schedule"] == [{"cron": "17 * * * *"}] and "workflow_dispatch" in on
+    steps = {s.get("name"): s for s in job["steps"]}
+    cmd = steps["Цикл прогнозов и отправки"]["run"]
+    for part in ("--mode submit", "--tournament both", "--research agent",
+                 "--agent-model openrouter/anthropic/claude-haiku-4.5", "--agent-max-news 2",
+                 "--model openrouter/anthropic/claude-opus-5.5", "--reasoning high", "--predictions 1",
+                 "--run-budget 1.0", "--loop-minutes 335", "--poll-minutes 10"):
         assert part in cmd
+    # окно цикла + запас на последний вопрос + подготовка job укладываются в timeout
+    assert 335 + R.LOOP_GRACE_S / 60 + 2 + 3 < job["timeout-minutes"] <= 360
+    restart = steps["Перезапустить цикл"]
+    assert restart["if"] == "success() || failure()" and "gh workflow run forecast.yml" in restart["run"]
+    assert restart["env"]["GH_TOKEN"] == "${{ secrets.GITHUB_TOKEN }}"
+    names = [s.get("name") for s in job["steps"]]
+    assert names.index("Сохранить состояние") < names.index("Перезапустить цикл")
     assert all(v.startswith("${{ secrets.") for k, v in job["env"].items() if k.endswith(("_TOKEN", "_KEY")))
 
 

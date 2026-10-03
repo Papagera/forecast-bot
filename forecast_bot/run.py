@@ -33,6 +33,9 @@ TOURNAMENTS = {"fall": 33121, "minibench": "minibench"}
 TEST_TOURNAMENT = "bot-testing-area"
 ASKNEWS_MONTHLY_CAP = 900  # решение income 02.10.2026: при лимите AskNews 1k/мес
 PER_QUESTION_DAY_CALLS = 40  # ~16 вызовов на вопрос (1 сводка + 5 прогнозов + 10 парсеров) + запас на повторы
+# Сколько после окна цикла ещё можно НАЧАТЬ вопрос (агент ≈ 1–3 мин на вопрос): 2 мин подготовки job +
+# 335 мин цикла + 5 мин + последний вопрос ≈ 345 < timeout 350 мин.
+LOOP_GRACE_S = 300
 
 
 def submit_allowed(mode: str, env: Optional[dict] = None) -> bool:
@@ -113,6 +116,7 @@ async def run(
     run_id: Optional[str] = None,
     asknews_cap: int = ASKNEWS_MONTHLY_CAP,
     variant: Optional[str] = None,
+    stop_at: Optional[float] = None,
 ) -> RunResult:
     from forecast_bot import ai_guard, guarded_llm, journal as J
 
@@ -127,6 +131,10 @@ async def run(
         questions = await asyncio.to_thread(client.get_all_open_questions_from_tournament, tournament)
         for q in questions:
             if limit is not None and done >= limit:
+                return result
+            if stop_at is not None and time.time() > stop_at:
+                # Окно цикла вышло: новый вопрос не начинаем, иначе job упрётся в timeout и не перезапустится.
+                result.stopped_reason = "время цикла вышло"
                 return result
             qid = q.id_of_question
             # «Не дважды»: флаг Metaculus по бот-аккаунту + свой журнал (только реальные отправки).
@@ -201,6 +209,69 @@ async def run(
     return result
 
 
+@dataclass
+class LoopStats:
+    started_at: float
+    finished_at: float = 0.0
+    polls: int = 0                  # опросов с обращением к Metaculus
+    skipped_day_cap: int = 0        # опросов, пропущенных: суточный потолок уже выбран (по леджеру)
+    errors: int = 0                 # опросов, упавших с исключением (цикл продолжается)
+    forecasts: int = 0              # строк ok за цикл
+    last_found_at: Optional[float] = None   # когда в последний раз нашёлся новый вопрос
+    stop_reasons: list[str] = field(default_factory=list)
+
+    def line(self) -> str:
+        last = (dt.datetime.fromtimestamp(self.last_found_at, dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                if self.last_found_at else "—")
+        return (f"Цикл: опросов {self.polls}, пропущено по суточному потолку {self.skipped_day_cap}, "
+                f"ошибок {self.errors}, прогнозов {self.forecasts}, последний найденный вопрос {last}")
+
+    def save(self, path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self.__dict__, ensure_ascii=False))
+
+
+async def poll_loop(*, run_once, duration_s: float, poll_s: float, run_budget: Optional[float],
+                    clock=time.time, sleep=None, day_spent=None, day_cap=None) -> LoopStats:
+    """Цикл опроса внутри одного job: прогон → пауза poll_s → … пока не выйдет duration_s.
+
+    - Лимит прогона (`run_budget`) обнуляется на КАЖДОМ опросе — это прежние «$1 за прогон».
+    - Суточный потолок проверяется по леджеру ПЕРЕД каждым опросом: выбран — опрос пропускается целиком
+      (ни Metaculus, ни моделей), цикл ждёт следующего окна. Внутри опроса его же держит ai_guard на каждом вызове.
+    - Исключение в опросе не роняет цикл: считается и логируется, следующий опрос по расписанию.
+    - Новый опрос не начинается, если до конца окна меньше паузы — job должен успеть сохранить кэш.
+    """
+    from forecast_bot import ai_guard, guarded_llm
+
+    sleep = sleep or asyncio.sleep
+    day_spent = day_spent or (lambda: ai_guard.spent_today_app(guarded_llm.APP))
+    cap = day_cap if day_cap is not None else (ai_guard.APP_LIMITS.get(guarded_llm.APP) or {}).get("day_usd")
+    stats = LoopStats(started_at=clock())
+    deadline = stats.started_at + duration_s
+    while True:
+        if cap is not None and day_spent() >= cap:
+            stats.skipped_day_cap += 1
+        else:
+            guarded_llm.start_run(run_budget)
+            stats.polls += 1
+            try:
+                res = await run_once()
+                ok = res.count("ok")
+                stats.forecasts += ok
+                if res.rows:
+                    stats.last_found_at = clock()
+                if res.stopped_reason:
+                    stats.stop_reasons.append(res.stopped_reason)
+            except Exception as exc:  # сеть/API — не повод бросать цикл
+                stats.errors += 1
+                logger.exception("опрос упал: %s", exc)
+        if clock() + poll_s >= deadline:
+            break
+        await sleep(poll_s)
+    stats.finished_at = clock()
+    return stats
+
+
 def write_dry_report(result: RunResult, path) -> None:
     lines = [f"# Dry-run {dt.date.today():%d.%m.%Y} · прогон {result.run_id}", ""]
     ok = [r for r in result.rows if r["status"] == "ok"]
@@ -255,7 +326,11 @@ def main(argv: Optional[list[str]] = None) -> int:
                     help="reasoning_effort основной модели (перекрывает FORECAST_REASONING)")
     ap.add_argument("--research", choices=["asknews", "asknews-latest", "online", "none", "agent"], default=None,
                     help="поиск: AskNews свежие+архив (6 вызовов) / только свежие (1) / OpenRouter :online / без поиска")
-    ap.add_argument("--run-budget", type=float, default=None, help="лимит $ на один запуск (Actions: 1.0)")
+    ap.add_argument("--run-budget", type=float, default=None,
+                    help="лимит $ на один прогон (Actions: 1.0); в цикле — на каждый опрос")
+    ap.add_argument("--loop-minutes", type=float, default=None,
+                    help="крутить цикл опроса столько минут (Actions: 335 при timeout job 350)")
+    ap.add_argument("--poll-minutes", type=float, default=10, help="пауза между опросами в цикле")
     ap.add_argument("--report-dir", default=None, help="куда положить отчёт dry-run (по умолчанию _отчёты/ основного чекаута)")
     args = ap.parse_args(argv)
     if args.research:
@@ -299,10 +374,25 @@ def main(argv: Optional[list[str]] = None) -> int:
         from forecast_bot.bot import ForecastBot
         from forecast_bot.journal import Journal
 
-        guarded_llm.start_run(args.run_budget)
+        client, bot, journal = MetaculusClient(), ForecastBot(), Journal(paths.journal_db())
+        tournaments = [TOURNAMENTS.get(n, TEST_TOURNAMENT) for n in names]
 
-        result = asyncio.run(run(client=MetaculusClient(), bot=ForecastBot(), journal=Journal(paths.journal_db()),
-                                 tournaments=[TOURNAMENTS.get(n, TEST_TOURNAMENT) for n in names], submit=submit, limit=args.limit))
+        if args.loop_minutes:
+            hard_stop = time.time() + args.loop_minutes * 60 + LOOP_GRACE_S
+
+            async def run_once() -> RunResult:
+                return await run(client=client, bot=bot, journal=journal, tournaments=tournaments,
+                                 submit=submit, limit=args.limit, stop_at=hard_stop)
+
+            stats = asyncio.run(poll_loop(run_once=run_once, duration_s=args.loop_minutes * 60,
+                                          poll_s=args.poll_minutes * 60, run_budget=args.run_budget))
+            stats.save(paths.state_dir() / "loop.json")
+            print(stats.line())
+            return 0
+
+        guarded_llm.start_run(args.run_budget)
+        result = asyncio.run(run(client=client, bot=bot, journal=journal, tournaments=tournaments,
+                                 submit=submit, limit=args.limit))
     if not submit:
         report_path = paths.reports_dir() / f"dry-run-{dt.date.today():%Y-%m-%d}-{result.run_id}.md"
         write_dry_report(result, report_path)

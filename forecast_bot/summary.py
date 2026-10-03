@@ -28,6 +28,18 @@ def render(since: float) -> str:
         f"$ за сутки (леджер): {day_cost:.4f}",
         "",
     ]
+    loop_file = paths.state_dir() / "loop.json"
+    if loop_file.exists():
+        import json
+
+        from forecast_bot.run import LoopStats
+
+        try:
+            data = json.loads(loop_file.read_text())
+            if data.get("finished_at", 0) >= since:
+                lines += [LoopStats(**data).line(), ""]
+        except (ValueError, TypeError):
+            lines += ["Цикл: файл статистики повреждён.", ""]
     if rows:
         lines += ["| вопрос | тип | статус | $ | AskNews |", "|---|---|---|---|---|"]
         for r in rows:
