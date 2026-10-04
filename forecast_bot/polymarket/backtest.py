@@ -16,7 +16,9 @@ from typing import Iterable, Optional
 from forecast_bot import paths
 
 APP = "polymarket"
-STAGE_START = datetime(2026, 10, 5, tzinfo=timezone.utc)
+# Начало этапа — в UTC и с запасом: первые строки приложения polymarket в леджере — 2026-10-04 22:26 UTC (у Никиты уже
+# 05.10 по Киеву). Прежнее значение 05.10 00:00 UTC не видело $4.8 этих трат — потолок этапа недосчитывал.
+STAGE_START = datetime(2026, 10, 4, tzinfo=timezone.utc)
 STAGE_CAP_USD = 20.0
 BACKTEST_DAY_USD = 8.0  # суточный потолок приложения на время бэктеста A (income 05.10.2026); для B — $2 из ai_guard
 CUTOFF = datetime(2026, 7, 1, tzinfo=timezone.utc)  # Opus 5.5: knowledge cutoff — июнь 2026 (platform.claude.com)

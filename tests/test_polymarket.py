@@ -153,6 +153,11 @@ def test_stage_cap_from_ledger():
     assert B.stage_budget_left() < 0
 
 
+def test_stage_start_covers_first_backtest_spend():
+    # первые траты этапа — 2026-10-04 22:26 UTC (леджер); потолок обязан их видеть
+    assert B.STAGE_START <= datetime(2026, 10, 4, 22, 26, tzinfo=UTC)
+
+
 def test_data_lives_outside_repo(monkeypatch):
     from forecast_bot import paths
 
