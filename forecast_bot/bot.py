@@ -17,7 +17,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from forecast_bot.guarded_llm import GuardedLlm, install_sentinel
+from forecast_bot.ai_guard import BudgetExceeded
+from forecast_bot.guarded_llm import GuardedLlm, UnguardedLlmCall, install_sentinel
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "vendor" / "metac_bot_template"
 
@@ -189,12 +190,18 @@ class ForecastBot(FallTemplateBot2026):
         if isinstance(researcher, str) and researcher in ASKNEWS_CALLS:
             # Считаем ДО вызова: квота тратится и тогда, когда ответ потом упал.
             self.asknews_calls[question.id_of_question] += ASKNEWS_CALLS[researcher]
-        if researcher == ASKNEWS_LATEST:
-            async with self._concurrency_limiter:
-                return await self._asknews_latest(question.question_text)
         if researcher == AGENT_RESEARCHER:
             return await self._agent_research(question)
-        return await super().run_research(question)
+        try:
+            if researcher == ASKNEWS_LATEST:
+                async with self._concurrency_limiter:
+                    return await self._asknews_latest(question.question_text)
+            return await super().run_research(question)
+        except (BudgetExceeded, UnguardedLlmCall):
+            raise  # отказ гарда — честный пропуск вопроса, не «исследование без новостей»
+        except Exception as exc:
+            # Поиск упал (05.10.2026: кошелёк AskNews пуст, 402001) — прогноз без новостей лучше, чем никакого.
+            return f"News search was unavailable ({type(exc).__name__}); forecast from the question text alone."
 
     async def _agent_research(self, question: Any) -> str:
         from forecast_bot.agent import ResearchAgent

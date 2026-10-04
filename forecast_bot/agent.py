@@ -165,6 +165,7 @@ class ResearchAgent:
         self.news = news
         self.max_tokens = max_tokens
         self.news_calls = 0
+        self.news_failed = False
         self.sources: dict[str, str] = {}
         self.raw_brief = ""
         self.verdict: verify.Verdict | None = None
@@ -174,9 +175,19 @@ class ResearchAgent:
         return ai_guard.spent_by_user(user, since)[0]
 
     async def _run_tool(self, name: str, args: dict) -> str:
+        """Сбой инструмента — ответ модели, а не падение вопроса. 05.10.2026 кошелёк AskNews кончился
+        (APIError 402001): исключение из поиска роняло исследование целиком, и вопрос уходил в error без прогноза."""
+        try:
+            return await self._run_tool_inner(name, args)
+        except Exception as exc:
+            if name == "search_news":
+                self.news_failed = True  # дальше на этом вопросе поиск не пробуем
+            return f"Инструмент {name} недоступен ({type(exc).__name__}: {str(exc)[:120]}). Продолжай без него."
+
+    async def _run_tool_inner(self, name: str, args: dict) -> str:
         if name == "search_news":
-            if self.news is None or self.news_calls >= self.max_news:
-                return "Поиск новостей недоступен (исчерпан лимит вызовов на вопрос)."
+            if self.news is None or self.news_failed or self.news_calls >= self.max_news:
+                return "Поиск новостей недоступен (исчерпан лимит вызовов на вопрос или сервис не отвечает)."
             self.news_calls += 1
             return _clip(await self.news(str(args.get("query", ""))[:300]))
         if name == "fetch_url":
