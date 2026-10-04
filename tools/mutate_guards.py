@@ -137,6 +137,19 @@ SOURCE_MUTATIONS = {
         "forecast_bot.bot", '            return hint + "\\n\\nNo news search was run for this market-series question."',
         '            return hint + "\\n\\n" + await self._run_research_inner(question)',
         "tests/test_pulse.py::test_market_series_question_skips_search"),
+    "MC: буква сдвинута на позицию": (
+        "forecast_bot.mc", 'k = ord(lm.group(1).lower()) - ord("a")', 'k = ord(lm.group(1).lower()) - ord("a") + 1',
+        "tests/test_mc.py::test_placeholders_map_by_position_real_house_case"),
+    "MC: берётся первый блок, а не финальный": (
+        "forecast_bot.mc", "for block, pct in reversed(blocks):", "for block, pct in blocks:",
+        "tests/test_mc.py::test_last_complete_block_wins"),
+    "MC: промпт с заглушками Option_A": (
+        "forecast_bot.bot", "mc.patch_prompt(prompt, list(question.options))", "prompt",
+        "tests/test_mc.py::test_bot_sends_explicit_names_and_parses_without_llm_parser"),
+    "MC: снова гадает LLM-парсер": (
+        "forecast_bot.bot", "        if parsed is not None:\n            options = PredictedOptionList(",
+        "        if False:\n            options = PredictedOptionList(",
+        "tests/test_mc.py::test_bot_sends_explicit_names_and_parses_without_llm_parser"),
     "агент: котировки снова со Stooq": (
         "forecast_bot.agent", 'f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}"', '"https://stooq.com/q/d/l/"',
         "tests/test_agent.py::test_stock_history_reads_yahoo"),

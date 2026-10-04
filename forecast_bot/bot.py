@@ -127,6 +127,33 @@ class ForecastBot(FallTemplateBot2026):
             return int(os.environ.get("FORECAST_AGENT_MAX_NEWS", MAX_NEWS_CALLS))
         return ASKNEWS_CALLS.get(researcher, 0) if isinstance(researcher, str) else 0
 
+    async def _multiple_choice_prompt_to_forecast(self, question: Any, prompt: str) -> Any:
+        """MC: явные названия вариантов в промпте + детерминированный разбор ответа (forecast_bot/mc.py).
+        LLM-парсер шаблона — только если ответ не разобрался однозначно."""
+        from forecasting_tools import PredictedOptionList, ReasonedPrediction, clean_indents, structure_output
+        from forecasting_tools.data_models.multiple_choice_report import PredictedOption
+
+        from forecast_bot import mc
+
+        reasoning = await self.get_llm("default", "llm").invoke(mc.patch_prompt(prompt, list(question.options)))
+        parsed = mc.parse_final(reasoning, list(question.options))
+        if parsed is not None:
+            options = PredictedOptionList(predicted_options=[
+                PredictedOption(option_name=o, probability=parsed[o]) for o in question.options])
+            return ReasonedPrediction(prediction_value=options, reasoning=reasoning)
+        parsing_instructions = clean_indents(f"""
+            Make sure that all option names are one of the following:
+            {question.options}
+            If the text uses letters (Option_A, Option_B, ...), Option_A is the first option in this list, Option_B the
+            second, and so on. Do not skip options with 0%; include them with 0% probability.
+            {self._create_resolved_question_parsing_message()}
+            """)
+        options = await structure_output(text_to_structure=reasoning, output_type=PredictedOptionList,
+                                         model=self.get_llm("parser", "llm"),
+                                         num_validation_samples=self._structure_output_validation_samples,
+                                         additional_instructions=parsing_instructions)
+        return ReasonedPrediction(prediction_value=options, reasoning=reasoning)
+
     async def run_research(self, question: Any) -> str:
         hint = await asyncio.to_thread(self.quant_hint, question)
         if hint:
