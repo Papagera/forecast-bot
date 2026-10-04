@@ -175,7 +175,8 @@ def test_workflow_gates_and_limits():
     assert on["schedule"] == [{"cron": "17 * * * *"}] and "workflow_dispatch" in on
     steps = {s.get("name"): s for s in job["steps"]}
     cmd = steps["Цикл прогнозов и отправки"]["run"]
-    for part in ("--mode submit", "--tournament both", "--research agent",
+    for part in ("--mode submit", "--tournaments \"${{ vars.FORECAST_TOURNAMENTS || 'fall,minibench' }}\"",
+                 "--quant-hints", "--research agent",
                  "--agent-model openrouter/anthropic/claude-haiku-4.5", "--agent-max-news 2",
                  "--model openrouter/anthropic/claude-opus-5.5", "--reasoning high", "--predictions 1",
                  "--run-budget 1.0", "--loop-minutes 335", "--poll-minutes 10"):

@@ -82,6 +82,15 @@ class Journal:
             ).fetchone()
         return row is not None
 
+    def last_submitted_at(self, question_id: int) -> Optional[float]:
+        """Время последней успешной отправки по вопросу (spot-турниры обновляют прогноз по расписанию)."""
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT MAX(submitted_at) t FROM forecasts WHERE question_id = ? AND mode = 'submit' AND status = ?",
+                (question_id, OK),
+            ).fetchone()
+        return float(row["t"]) if row and row["t"] is not None else None
+
     def asknews_calls_this_month(self, now: Optional[float] = None) -> int:
         d = dt.datetime.fromtimestamp(now or time.time())
         since = dt.datetime(d.year, d.month, 1).timestamp()

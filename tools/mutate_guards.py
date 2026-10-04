@@ -111,6 +111,28 @@ SOURCE_MUTATIONS = {
     "цикл: новые вопросы после срока": (
         "forecast_bot.run", "if stop_at is not None and time.time() > stop_at:", "if False:",
         "tests/test_loop.py::test_stop_at_does_not_start_new_questions"),
+    "pulse: обновление без паузы": (
+        "forecast_bot.run", "    return age >= UPDATE_EVERY_S", "    return True",
+        "tests/test_pulse.py::test_needs_update"),
+    "pulse: нет финального обновления перед закрытием": (
+        "forecast_bot.run", "    if close_ts is not None and close_ts - now <= FINAL_WINDOW_S:", "    if False:",
+        "tests/test_pulse.py::test_needs_update"),
+    "pulse: обновления не работают («не дважды» везде)": (
+        "forecast_bot.run", "            if tournament in refresh:\n                # Spot-очки",
+        "            if False:\n                # Spot-очки",
+        "tests/test_pulse.py::test_group_subquestions_forecast_and_refresh_on_schedule"),
+    "pulse: «не дважды» снят и для обычных турниров": (
+        "forecast_bot.run", "            elif submit and (q.already_forecasted or journal.already_submitted(qid)):",
+        "            elif False:", "tests/test_pulse.py::test_non_spot_tournament_keeps_not_twice"),
+    "pulse: несуществующий сезон роняет прогон": (
+        "forecast_bot.run", "            if tournament in refresh:  # сезона Market Pulse", "            if False:  # сезона Market Pulse",
+        "tests/test_pulse.py::test_missing_pulse_season_is_skipped_quietly"),
+    "quant: подсказка для начавшегося периода": (
+        "forecast_bot.quant", "if spec is None or per is None or per[0] <= asof:", "if spec is None or per is None:",
+        "tests/test_pulse.py::test_pulse_quant_percentiles_and_no_lookahead"),
+    "quant: подсказка без флага": (
+        "forecast_bot.bot", 'if os.environ.get("FORECAST_QUANT_HINTS", "").strip() != "1":', "if False:",
+        "tests/test_pulse.py::test_quant_hint_reaches_forecaster_only_with_flag"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

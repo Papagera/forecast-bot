@@ -113,6 +113,7 @@ class ForecastBot(FallTemplateBot2026):
         super().__init__(**kwargs)
         self.asknews_calls: Counter[int] = Counter()
         self.research_stats: dict[int, dict] = {}  # сверка чисел исследования агента (verify.check)
+        self.quant_hints: dict[int, str] = {}      # подсказки quant, ушедшие прогнозисту (Market Pulse)
         # У шаблона семафор — атрибут класса, привязывается к первому event loop; второй
         # asyncio.run в том же процессе (тесты) упал бы «bound to a different event loop».
         self._concurrency_limiter = asyncio.Semaphore(self._max_concurrent_questions)
@@ -127,6 +128,34 @@ class ForecastBot(FallTemplateBot2026):
         return ASKNEWS_CALLS.get(researcher, 0) if isinstance(researcher, str) else 0
 
     async def run_research(self, question: Any) -> str:
+        research = await self._run_research_inner(question)
+        hint = await asyncio.to_thread(self.quant_hint, question)
+        if hint:
+            self.quant_hints[question.id_of_question] = hint
+            return f"{hint}\n\n{research}"
+        return research
+
+    def quant_hint(self, question: Any) -> str | None:
+        """Статистическая база по ряду (Market Pulse) — только при FORECAST_QUANT_HINTS=1.
+        Числа посчитаны нами по данным строго до сегодняшней даты (FORECAST_ASOF — для сухих прогонов)."""
+        if os.environ.get("FORECAST_QUANT_HINTS", "").strip() != "1":
+            return None
+        from datetime import date, datetime, timezone
+
+        from forecast_bot import paths, quant
+
+        label = getattr(question, "group_question_option", None)
+        title = (getattr(question, "api_json", None) or {}).get("title") or question.question_text
+        asof_env = os.environ.get("FORECAST_ASOF", "").strip()
+        asof = date.fromisoformat(asof_env) if asof_env else datetime.now(timezone.utc).date()
+        year = (question.close_time or datetime.now(timezone.utc)).year
+        try:
+            q = quant.pulse_quant(title, label or "", year, asof, paths.data_dir() / "polygon" / "series")
+        except Exception:  # ряд недоступен — без подсказки, прогноз идёт как обычно
+            return None
+        return q.hint() if q else None
+
+    async def _run_research_inner(self, question: Any) -> str:
         researcher = self.get_llm("researcher")
         if isinstance(researcher, str) and researcher in ASKNEWS_CALLS:
             # Считаем ДО вызова: квота тратится и тогда, когда ответ потом упал.

@@ -84,6 +84,22 @@ def _coinbase(product: str) -> Series:
     return _series(f"coinbase:{product}", [(d, *v) for d, v in rows.items()], crypto=True)
 
 
+def _fred(series_id: str) -> Series:
+    """FRED без ключа: fredgraph.csv (дата, значение); пропуски «.» отбрасываются."""
+    r = requests.get("https://fred.stlouisfed.org/graph/fredgraph.csv", params={"id": series_id},
+                     headers=UA, timeout=30)
+    r.raise_for_status()
+    rows = []
+    for line in r.text.splitlines()[1:]:
+        d, _, v = line.partition(",")
+        try:
+            x = float(v)
+        except ValueError:
+            continue
+        rows.append((date.fromisoformat(d), x, x, x, x))
+    return _series(f"fred:{series_id}", rows, crypto=False)
+
+
 def _series(key: str, rows: list, crypto: bool) -> Series:
     rows = sorted(rows)
     return Series(key, [r[0] for r in rows], [r[1] for r in rows], [r[2] for r in rows],
@@ -99,7 +115,7 @@ def load(key: str, cache_dir: Path) -> Series:
         return Series(d["key"], [date.fromisoformat(x) for x in d["dates"]], d["open"], d["high"], d["low"],
                       d["close"], d["crypto"])
     src, sym = key.split(":", 1)
-    s = _coinbase(sym) if src == "coinbase" else _yahoo(sym)
+    s = {"coinbase": _coinbase, "fred": _fred}.get(src, _yahoo)(sym)
     path.write_text(json.dumps({"key": s.key, "dates": [x.isoformat() for x in s.dates], "open": s.open,
                                 "high": s.high, "low": s.low, "close": s.close, "crypto": s.crypto}))
     return s
@@ -446,3 +462,96 @@ def continuous_scores(cdf: list[float], grid: list[float], outcome: float, mix_u
         pu = 0.005
     p = max(p, 1e-6)
     return {"log": math.log(p * n), "baseline": 100 * math.log2(p / pu), "inner_mass": inner}
+
+
+# ─────────────────────────── Market Pulse ───────────────────────────
+# Группы Market Pulse: подвопрос = двухнедельный период «Jul 27 - Aug 7». Тексты условий закрытых вопросов
+# API не отдаёт, поэтому определения ниже — допущения по названию группы; они печатаются в подсказке прогнозисту.
+PULSE = [
+    # (regex по заголовку группы, тип, ряды, единицы, допущение)
+    (r"ust 10y yield", "end", ("fred:DGS10",), "pp", "значение DGS10 (FRED) на последний день периода"),
+    (r"high yield option-adjusted spread", "end", ("fred:BAMLH0A0HYM2",), "pp",
+     "значение BAMLH0A0HYM2 (FRED) на последний день периода"),
+    (r"maximum intraday value of the vix", "max", ("yahoo:^VIX",), "pt", "максимум дневных High ^VIX за период"),
+    (r"nvidia's stock price returns exceed microsoft", "rel", ("yahoo:NVDA", "yahoo:MSFT"), "pp",
+     "доходность NVDA минус MSFT за период, закрытие к закрытию, в п.п."),
+    (r"nvidia's stock price returns exceed apple", "rel", ("yahoo:NVDA", "yahoo:AAPL"), "pp",
+     "доходность NVDA минус AAPL за период, закрытие к закрытию, в п.п."),
+    (r"nasdaq-100 futures total price returns exceed s&p 500 futures", "rel", ("yahoo:NQ=F", "yahoo:ES=F"), "pp",
+     "доходность NQ=F минус ES=F за период, в п.п."),
+    (r"gold futures total price returns exceed s&p 500 futures", "rel", ("yahoo:GC=F", "yahoo:ES=F"), "pp",
+     "доходность GC=F минус ES=F за период, в п.п."),
+    (r"crude oil futures total price returns exceed s&p 500 futures", "rel", ("yahoo:CL=F", "yahoo:ES=F"), "pp",
+     "доходность CL=F минус ES=F за период, в п.п."),
+]
+PERIOD_RE = rf"{_MON}\s+(\d{{1,2}})\s*[-–]\s*{_MON}?\s*(\d{{1,2}})"
+PCTS = (0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95)
+
+
+def period(label: str, year: int) -> Optional[tuple[date, date]]:
+    m = re.search(PERIOD_RE, (label or "").lower())
+    if not m:
+        return None
+    m1 = _month(m.group(1))
+    m2 = _month(m.group(3)) if m.group(3) else m1
+    d1, d2 = date(year, m1, int(m.group(2))), date(year, m2, int(m.group(4)))
+    return (d1, d2) if d2 >= d1 else None
+
+
+def _weekdays(a: date, b: date) -> int:
+    """Будни в (a, b]."""
+    return sum(1 for k in range(1, (b - a).days + 1) if (a + timedelta(days=k)).weekday() < 5)
+
+
+@dataclass
+class PulseQuant:
+    kind: str
+    unit: str
+    assumption: str
+    percentiles: dict[float, float]
+    n: int
+    asof: date
+
+    def hint(self) -> str:
+        pts = ", ".join(f"{int(p * 100)}%: {v:.3f}" for p, v in self.percentiles.items())
+        return (f"STATISTICAL BASELINE (computed from the data series itself, history up to {self.asof}, "
+                f"{self.n} historical windows of the same length). Percentiles in {self.unit}: {pts}. "
+                f"Assumed definition: {self.assumption}. Use it as the base rate and adjust only for specific, "
+                f"sourced reasons; keep the tails at least this wide.")
+
+
+def pulse_quant(group_title: str, label: str, year: int, asof: date, cache_dir: Path) -> Optional[PulseQuant]:
+    """Эмпирическое распределение исхода подвопроса Market Pulse по окнам той же длины (данные строго до asof)."""
+    t = (group_title or "").lower()
+    spec = next((p for p in PULSE if re.search(p[0], t)), None)
+    per = period(label, year)
+    if spec is None or per is None or per[0] <= asof:
+        return None
+    _, kind, keys, unit, assumption = spec
+    start, end = per
+    gap = _weekdays(asof, start - timedelta(days=1))          # от последних данных до начала периода
+    length = _weekdays(start - timedelta(days=1), end)        # будни внутри периода
+    series = [load(k, cache_dir).before(asof) for k in keys]
+    if any(len(s.close) < 300 for s in series):
+        return None
+    if kind == "end":
+        v = np.array(series[0].close[-1500:])
+        h = gap + length
+        samples = v[-1] + (v[h:] - v[:-h])                      # аддитивные изменения за горизонт
+    elif kind == "max":
+        s = series[0]
+        c, hi = np.array(s.close[-1500:]), np.array(s.high[-1500:])
+        samples = np.array([hi[i + gap + 1: i + gap + length + 1].max() / c[i] for i in range(len(c) - gap - length)])
+        samples = samples * c[-1]
+    else:  # rel: общие даты двух рядов
+        a, b = series
+        common = sorted(set(a.dates) & set(b.dates))[-1500:]
+        ia = {d: i for i, d in enumerate(a.dates)}
+        ib = {d: i for i, d in enumerate(b.dates)}
+        ca = np.array([a.close[ia[d]] for d in common]); cb = np.array([b.close[ib[d]] for d in common])
+        L = length
+        samples = ((ca[L:] / ca[:-L]) - (cb[L:] / cb[:-L])) * 100
+    if len(samples) < 100:
+        return None
+    pct = {p: float(np.quantile(samples, p)) for p in PCTS}
+    return PulseQuant(kind, unit, assumption, pct, int(len(samples)), series[0].dates[-1])
