@@ -555,3 +555,34 @@ def pulse_quant(group_title: str, label: str, year: int, asof: date, cache_dir: 
         return None
     pct = {p: float(np.quantile(samples, p)) for p in PCTS}
     return PulseQuant(kind, unit, assumption, pct, int(len(samples)), series[0].dates[-1])
+
+
+def pulse_outcome(group_title: str, label: str, year: int, cache_dir: Path) -> Optional[float]:
+    """Фактический исход подвопроса Market Pulse по тем же допущениям, что и pulse_quant (для сухих прогонов)."""
+    t = (group_title or "").lower()
+    spec = next((p for p in PULSE if re.search(p[0], t)), None)
+    per = period(label, year)
+    if spec is None or per is None:
+        return None
+    _, kind, keys, _unit, _ = spec
+    start, end = per
+    series = [load(k, cache_dir) for k in keys]
+    if kind == "end":
+        s = series[0]
+        idx = [i for i, d in enumerate(s.dates) if d <= end]
+        return s.close[idx[-1]] if idx and s.dates[idx[-1]] >= start else None
+    if kind == "max":
+        s = series[0]
+        vals = [s.high[i] for i, d in enumerate(s.dates) if start <= d <= end]
+        return max(vals) if vals else None
+    a, b = series
+
+    def ret(s: Series) -> Optional[float]:
+        before = [i for i, d in enumerate(s.dates) if d < start]
+        inside = [i for i, d in enumerate(s.dates) if start <= d <= end]
+        if not before or not inside:
+            return None
+        return s.close[inside[-1]] / s.close[before[-1]] - 1
+
+    ra, rb = ret(a), ret(b)
+    return None if ra is None or rb is None else (ra - rb) * 100

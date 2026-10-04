@@ -133,6 +133,10 @@ SOURCE_MUTATIONS = {
     "quant: подсказка без флага": (
         "forecast_bot.bot", 'if os.environ.get("FORECAST_QUANT_HINTS", "").strip() != "1":', "if False:",
         "tests/test_pulse.py::test_quant_hint_reaches_forecaster_only_with_flag"),
+    "pulse: поиск на каждое обновление ряда": (
+        "forecast_bot.bot", '            return hint + "\\n\\nNo news search was run for this market-series question."',
+        '            return hint + "\\n\\n" + await self._run_research_inner(question)',
+        "tests/test_pulse.py::test_market_series_question_skips_search"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

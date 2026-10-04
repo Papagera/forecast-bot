@@ -46,6 +46,10 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.lock.txt \
 `gh workflow run` (GITHUB_TOKEN, `actions: write`); cron раз в час — страховка. Вариант B (блок 2.1).
 Job идёт только при переменной репо `FORECAST_SUBMIT=1`; выключить бота — удалить переменную (или Cancel прогона:
 перезапуск только при success/failure).
+Турниры — переменная репо `FORECAST_TOURNAMENTS` (по умолчанию `fall,minibench`); `pulse` — Market Pulse:
+сезон `market-pulse-YYqN` подхватывается сам, «не дважды» там не действует — прогноз обновляется (spot-очки на
+закрытии, `run.needs_update`); подвопросы по рядам — база `quant.pulse_quant` (FRED/Yahoo) без поиска.
+Stooq закрыт JS-проверкой браузера — не использовать.
 Секреты: `METACULUS_TOKEN`, `OPENROUTER_API_KEY`, `ASKNEWS_API_KEY`. Журнал и леджер между запусками —
 `actions/cache` (`state/`); потеря кэша не ведёт к дублям: первичный признак — `my_forecasts` по API.
 LaunchAgent на маке не используется.

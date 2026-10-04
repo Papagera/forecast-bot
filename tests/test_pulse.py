@@ -163,6 +163,31 @@ def test_quant_hint_reaches_forecaster_only_with_flag(fake_llm, fake_asknews, mo
     assert any("STATISTICAL BASELINE" in p and "Percentiles in pp" in p for p in fake_llm.prompts)
 
 
+def test_market_series_question_skips_search(fake_llm, fake_asknews, monkeypatch):
+    """С подсказкой quant поиск (агент/AskNews) не запускается — бережём квоту AskNews."""
+    from forecast_bot import paths
+
+    monkeypatch.setattr(Q, "load", lambda key, cache_dir: _synthetic(key, seed=5 if "NVDA" in key else 6))
+    monkeypatch.setenv("FORECAST_PREDICTIONS", "1")
+    monkeypatch.setenv("FORECAST_ASOF", "2025-06-01")
+    monkeypatch.setenv("FORECAST_QUANT_HINTS", "1")
+    monkeypatch.setenv("FORECAST_RESEARCH", "asknews-latest")
+    calls = []
+
+    async def fake_latest(self, query):
+        calls.append(query)
+        return "news"
+
+    from forecast_bot.bot import ForecastBot
+
+    monkeypatch.setattr(ForecastBot, "_asknews_latest", fake_latest)
+    qs = subquestions(labels=("Jun 9 - Jun 20",))
+    for q in qs:
+        q.close_time = q.close_time.replace(year=2025)
+    res = _run(FakeMetaculusClient(qs), Journal(paths.journal_db()), ["x"], set(), submit=False)
+    assert res.count("ok") == 1 and calls == [] and res.rows[0]["asknews_calls"] == 0
+
+
 def test_period_parsing():
     assert Q.period("Sep 21 - Oct 2", 2026) == (date(2026, 9, 21), date(2026, 10, 2))
     assert Q.period("Jul 13 - Jul 24", 2026) == (date(2026, 7, 13), date(2026, 7, 24))

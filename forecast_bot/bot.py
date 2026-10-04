@@ -128,12 +128,14 @@ class ForecastBot(FallTemplateBot2026):
         return ASKNEWS_CALLS.get(researcher, 0) if isinstance(researcher, str) else 0
 
     async def run_research(self, question: Any) -> str:
-        research = await self._run_research_inner(question)
         hint = await asyncio.to_thread(self.quant_hint, question)
         if hint:
+            # Вопрос по рыночному ряду (Market Pulse): база по самому ряду, без поиска — подвопросы обновляются
+            # до ~11 раз, и поиск на каждое обновление съел бы квоту AskNews (900/мес). Проверено сухим
+            # прогоном 26Q3: tools/pulse_dryrun.py (поиск выключен, подсказка quant).
             self.quant_hints[question.id_of_question] = hint
-            return f"{hint}\n\n{research}"
-        return research
+            return hint + "\n\nNo news search was run for this market-series question."
+        return await self._run_research_inner(question)
 
     def quant_hint(self, question: Any) -> str | None:
         """Статистическая база по ряду (Market Pulse) — только при FORECAST_QUANT_HINTS=1.
