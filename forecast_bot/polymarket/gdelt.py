@@ -20,7 +20,7 @@ from forecast_bot.polymarket.http import get_json
 URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 SERVER_LEAK = timedelta(hours=24)  # насколько сервер «перебирает» за enddatetime (см. шапку)
 STOP = set("will the a an of in on at to by be is are for and or with than before after from this that which who "
-           "what when does do did has have not yes no market any more less above below between end close 2024 2025 "
+           "what when does do did has have not yes no market vs any more less above below between end close 2024 2025 "
            "2026 2027 january february march april may june july august september october november december".split())
 
 
@@ -38,7 +38,7 @@ def keywords(question: str, k: int = 5) -> list[str]:
     out: list[str] = []
     for w in words:
         lw = w.lower().strip(".'")
-        if lw in STOP or lw in (x.lower() for x in out):
+        if len(lw) < 3 or lw in STOP or lw in (x.lower() for x in out):  # GDELT отвергает слова короче 3 букв текстом
             continue
         out.append(w.strip(".'"))
         if len(out) >= k:

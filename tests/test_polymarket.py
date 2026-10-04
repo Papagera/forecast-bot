@@ -87,6 +87,10 @@ def test_price_before_is_strict():
     assert m.price_before(200) == 0.2 and m.price_before(201) == 0.4 and m.price_before(100) is None
 
 
+def test_gdelt_keywords_skip_short_words():
+    assert gdelt.keywords("FC Tulsa vs. New Mexico United: Both Teams to Score") == ["Tulsa", "New", "Mexico", "United", "Both"]
+
+
 def test_gdelt_cutoff_is_enforced_client_side():
     """Живой пример 05.10: enddatetime 15.08 00:00 вернул статьи, увиденные 15.08 20:00 и 16.08 00:00."""
     cutoff = datetime(2026, 8, 15, tzinfo=UTC)

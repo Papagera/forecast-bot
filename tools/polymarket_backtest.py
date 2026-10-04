@@ -181,6 +181,9 @@ def cmd_gdelt_fetch(a) -> int:
         try:
             arts = gdelt.search(m.question, t, retries=1)
         except RuntimeError as exc:
+            if "rate limited" not in str(exc):
+                print(f"{i}/{len(todo)} {m.id} {p}: {str(exc)[:90]} — пропуск (не темп)", flush=True)
+                continue
             fails += 1
             print(f"{i}/{len(todo)} {m.id} {p}: {str(exc)[:90]} — пауза {a.cooldown} с (подряд {fails})", flush=True)
             if fails >= a.max_fails:
