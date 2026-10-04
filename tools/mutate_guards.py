@@ -203,6 +203,13 @@ SOURCE_MUTATIONS = {
         "forecast_bot.polymarket.backtest",
         'if r["point"] == "t50" and k in t48 and abs(datetime.fromisoformat(r["t"]) - t48[k]) < timedelta(hours=12):',
         "if False:", "tests/test_polymarket.py::test_report_dedupes_coinciding_points"),
+    "polymarket: GDELT конец окна без запаса на утечку сервера": (
+        "forecast_bot.polymarket.gdelt", '"enddatetime": (cutoff - SERVER_LEAK)', '"enddatetime": (cutoff)',
+        "tests/test_polymarket.py::test_gdelt_search_filters_fake_leaky_response"),
+    "polymarket: режим gdelt без кэша идёт без новостей": (
+        "tools.polymarket_backtest", "                if key not in cache:\n                    stats[\"нет GDELT в кэше\"] += 1\n                    continue\n                research = gdelt.as_research(cache[key])",
+        "                research = gdelt.as_research(cache.get(key, []))",
+        "tests/test_polymarket.py::test_gdelt_mode_forecasts_only_from_cache"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

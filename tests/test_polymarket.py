@@ -70,6 +70,11 @@ def test_from_gamma_rejects(kw):
     assert M.from_gamma(_gamma(**kw)) is None
 
 
+def test_segments_by_volume():
+    assert [B.segment(v) for v in (0, 999, 1000, 9999, 10_000, 249_999, 250_000)] == \
+        ["micro", "micro", "tail", "tail", "mid", "mid", "liquid"]
+
+
 def test_fee_rates_by_category():
     assert M.fee_rate("crypto_fees") == 0.07 and M.fee_rate("geopolitics_fees") == 0.0
     assert M.fee_rate("sports_fees") == 0.05 and M.fee_rate("anything", fees_enabled=False) == 0.0
@@ -95,10 +100,11 @@ def test_gdelt_search_filters_fake_leaky_response(monkeypatch):
     payload = {"articles": [{"seendate": "20260816T000000Z", "title": "leak", "url": "u", "domain": "d"},
                             {"seendate": "20260814T100000Z", "title": "ok", "url": "u2", "domain": "d2"}]}
     seen = {}
-    monkeypatch.setattr(gdelt, "get_json", lambda url, params: seen.setdefault("p", params) and payload or payload)
+    monkeypatch.setattr(gdelt, "get_json", lambda url, params, **kw: seen.setdefault("p", params) and payload or payload)
     arts = gdelt.search("Will the Federal Reserve cut rates in August?", datetime(2026, 8, 15, tzinfo=UTC))
     assert [a.title for a in arts] == ["ok"]
-    assert seen["p"]["enddatetime"] == "20260815000000" and "Federal" in seen["p"]["query"]
+    # сервер добирает до +24 ч за enddatetime — конец окна сдвинут на сутки раньше t, фильтр всё равно строгий
+    assert seen["p"]["enddatetime"] == "20260814000000" and "Federal" in seen["p"]["query"]
     text = gdelt.as_research(arts)
     assert "[S1]" in text and "ok" in text and "leak" not in text
 
@@ -153,7 +159,8 @@ def test_data_lives_outside_repo(monkeypatch):
 
 def test_report_has_segments_and_roi():
     rows = [{"pre_cutoff": False, "segment": "tail", "point": "t50", "mode": "none", "p_bot": 0.8, "p_mkt": 0.5,
-             "outcome": 1, "fee_rate": 0.04, "market": f"m{i}", "t": "2026-08-03T00:00:00+00:00"} for i in range(3)]
+             "outcome": 1, "fee_rate": 0.04, "market": f"m{i}", "t": "2026-08-03T00:00:00+00:00", "volume": 5000}
+            for i in range(3)]
     out = B.report(rows)
     assert "| после | tail | t50 | none | 3 |" in out and "ROI после издержек" in out
 
@@ -170,3 +177,39 @@ def test_forecaster_freezes_date_and_passes_research(fake_llm, monkeypatch):
     prompt = next(x for x in fake_llm.prompts if '"Probability: ZZ%"' in x)
     assert "Today is 2026-08-10" in prompt and "[S1] 2026-08-09" in prompt
     assert "0.5" not in prompt.split("Your research assistant says:")[1].split("Today is")[0]  # цены рынка нет
+
+
+def _load_runner():
+    import importlib
+    return importlib.import_module("tools.polymarket_backtest")  # через sys.modules — чтобы мутации его видели
+
+
+def test_gdelt_mode_forecasts_only_from_cache(monkeypatch, tmp_path):
+    """Режим gdelt без кэша для точки — пропуск без вызова модели: «с поиском» не должен молча стать «без»."""
+    import types
+    from forecast_bot import ai_guard
+    from forecast_bot.polymarket import forecaster
+    R = _load_runner()
+    monkeypatch.setattr(B, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(B, "stage_budget_left", lambda: 10.0)
+    monkeypatch.setattr(ai_guard, "spent_by_user", lambda user, since: (0.01, 1))
+    m = M.from_gamma(_gamma())
+    m.history = [(int((m.start + timedelta(hours=h)).timestamp()), 0.4) for h in range(0, 24 * 30, 6)]
+    (tmp_path / "markets.jsonl").write_text(m.to_json() + "\n")
+    seg = B.segment(m.volume)
+    called = []
+
+    async def fake_forecast(mk, point, t, research):
+        called.append(research)
+        return 0.5, ""
+
+    monkeypatch.setattr(forecaster, "forecast", fake_forecast)
+    a = types.SimpleNamespace(mode="gdelt", points="t50,t48", segments=seg, limit=0, files="markets.jsonl")
+    asyncio.run(R._forecast(a))
+    assert called == [] and not (tmp_path / "backtest.jsonl").exists()
+    point, t = next(iter(B.points(m.start, m.closed).items()))
+    art = {"seen": (t - timedelta(hours=30)).isoformat(), "title": "Fed holds", "url": "u", "domain": "d", "language": "en"}
+    (tmp_path / "gdelt.jsonl").write_text(json.dumps({"key": R.gdelt_key(m.id, point), "t": t.isoformat(),
+                                                       "articles": [art]}) + "\n")
+    asyncio.run(R._forecast(a))
+    assert len(called) == 1 and "Fed holds" in called[0]

@@ -121,8 +121,9 @@ def iter_closed(end_min: str, end_max: str, page: int = PAGE, window_days: int =
         w_lo = max(lo, w_hi - timedelta(days=window_days))
         for offset in range(0, MAX_OFFSET + 1, page):
             try:
-                rows = get_json(GAMMA, {"closed": "true", "limit": page, "offset": offset, "order": "endDate",
-                                        "ascending": "false", "end_date_min": w_lo.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                # без order: сортировка endDate на окнах до ~02.08.2026 даёт 500 (живьём 05.10), окна и так задают порядок
+                rows = get_json(GAMMA, {"closed": "true", "limit": page, "offset": offset,
+                                        "end_date_min": w_lo.strftime("%Y-%m-%dT%H:%M:%SZ"),
                                         "end_date_max": w_hi.strftime("%Y-%m-%dT%H:%M:%SZ")})
             except RuntimeError as exc:
                 # 422 — глубже окна Gamma не пускает; 5xx после повторов — разовый сбой. В обоих случаях

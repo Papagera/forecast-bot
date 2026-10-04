@@ -20,9 +20,10 @@ STAGE_START = datetime(2026, 10, 5, tzinfo=timezone.utc)
 STAGE_CAP_USD = 20.0
 BACKTEST_DAY_USD = 8.0  # суточный потолок приложения на время бэктеста A (income 05.10.2026); для B — $2 из ai_guard
 CUTOFF = datetime(2026, 7, 1, tzinfo=timezone.utc)  # Opus 5.5: knowledge cutoff — июнь 2026 (platform.claude.com)
-TAIL_MAX_VOLUME = 10_000.0     # граница хвоста — по объёму; уточняется по распределению выборки (решение income)
+MICRO_MAX_VOLUME = 1_000.0     # ниже — «микро»: рынок почти не торговался, цена = котировка открытия, а не оценка
+TAIL_MAX_VOLUME = 10_000.0     # хвост: $1k–$10k объёма (граница по распределению выборки, решение income 05.10.2026)
 LIQUID_MIN_VOLUME = 250_000.0
-SPREAD = {"tail": 0.03, "mid": 0.02, "liquid": 0.01}  # исторического стакана API не даёт — ≈оценка, есть чувствительность
+SPREAD = {"micro": 0.05, "tail": 0.03, "mid": 0.02, "liquid": 0.01}  # исторического стакана API не даёт — ≈оценка, есть чувствительность
 THRESHOLDS = (0.05, 0.10, 0.15)
 P_CLIP = (0.01, 0.99)
 
@@ -33,6 +34,8 @@ def data_dir() -> Path:
 
 
 def segment(volume: float) -> str:
+    if volume < MICRO_MAX_VOLUME:
+        return "micro"
     if volume < TAIL_MAX_VOLUME:
         return "tail"
     if volume >= LIQUID_MIN_VOLUME:
@@ -122,6 +125,8 @@ def report(rows: Iterable[dict]) -> str:
     from collections import defaultdict
 
     rows = dedupe(list(rows))
+    for r in rows:  # сегмент — по объёму на момент отчёта (границы сегментов могли поменяться после прогона)
+        r["segment"] = segment(float(r.get("volume") or 0))
     groups = defaultdict(list)
     for r in rows:
         groups[(r["pre_cutoff"], r["segment"], r["point"], r["mode"])].append(r)

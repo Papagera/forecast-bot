@@ -1,8 +1,11 @@
 """Бесплатный поиск новостей GDELT DOC 2.0 с отсечкой по дате — для бэктеста «как будто на дату t».
 
 ⚠ `enddatetime` у GDELT НЕСТРОГИЙ: запрос с enddatetime=2026-08-15 00:00 вернул статьи с seendate
-2026-08-15 20:00 … 2026-08-16 00:00 (живой запрос 05.10.2026). Поэтому отсечка делается здесь, по seendate:
-только статьи, увиденные GDELT строго ДО момента прогноза. seendate ≥ даты публикации, так что отсечка безопасна.
+2026-08-15 20:00 … 2026-08-16 00:00, с enddatetime=2026-06-01 00:00 — все 50 статей из 06-01 18:15 … 06-02 00:00
+(живые запросы 05.10.2026), то есть сервер добирает до +24 ч. При sort=datedesc верх выдачи целиком из этих
+«лишних» суток, и строгий фильтр оставлял бы пусто. Поэтому: (1) серверу отдаём конец окна на SERVER_LEAK раньше t;
+(2) отсечка всё равно здесь, по seendate — только статьи, увиденные GDELT строго ДО t. seendate ≥ даты
+публикации, так что отсечка безопасна.
 Темп — не чаще раза в 6 с (требование API), см. http.MIN_INTERVAL_S.
 """
 from __future__ import annotations
@@ -15,6 +18,7 @@ from typing import Optional
 from forecast_bot.polymarket.http import get_json
 
 URL = "https://api.gdeltproject.org/api/v2/doc/doc"
+SERVER_LEAK = timedelta(hours=24)  # насколько сервер «перебирает» за enddatetime (см. шапку)
 STOP = set("will the a an of in on at to by be is are for and or with than before after from this that which who "
            "what when does do did has have not yes no market any more less above below between end close 2024 2025 "
            "2026 2027 january february march april may june july august september october november december".split())
@@ -53,14 +57,14 @@ def strictly_before(arts: list[Article], cutoff: datetime) -> list[Article]:
     return [a for a in arts if a.seen < cutoff]
 
 
-def search(question: str, cutoff: datetime, days: int = 14, max_records: int = 15) -> list[Article]:
+def search(question: str, cutoff: datetime, days: int = 14, max_records: int = 50, retries: int = 4) -> list[Article]:
     words = keywords(question)
     if not words:
         return []
     start = cutoff - timedelta(days=days)
     d = get_json(URL, {"query": " ".join(words), "mode": "artlist", "format": "json", "sort": "datedesc",
                        "maxrecords": max_records, "startdatetime": start.strftime("%Y%m%d%H%M%S"),
-                       "enddatetime": cutoff.strftime("%Y%m%d%H%M%S")})
+                       "enddatetime": (cutoff - SERVER_LEAK).strftime("%Y%m%d%H%M%S")}, retries=retries)
     arts = []
     for a in (d or {}).get("articles", []) or []:
         seen = _parse_seen(a.get("seendate", ""))

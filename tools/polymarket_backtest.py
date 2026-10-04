@@ -18,6 +18,8 @@ import json  # noqa: E402
 import sys  # noqa: E402
 import time  # noqa: E402
 from collections import Counter  # noqa: E402
+from datetime import datetime  # noqa: E402
+from urllib.parse import urlparse  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -29,9 +31,9 @@ from forecast_bot.polymarket import backtest as B, gdelt, markets as M  # noqa: 
 def cmd_select(a) -> int:
     out = B.data_dir()
     out.mkdir(parents=True, exist_ok=True)
-    keep: dict[str, list[M.Market]] = {"tail": [], "mid": [], "liquid": []}
-    quota = {"tail": a.tail, "mid": a.mid, "liquid": a.liquid}
-    existing = out / "markets.jsonl"
+    keep: dict[str, list[M.Market]] = {"micro": [], "tail": [], "mid": [], "liquid": []}
+    quota = {"micro": 0, "tail": a.tail, "mid": a.mid, "liquid": a.liquid}
+    existing = out / a.file
     if existing.exists():  # возобновление: уже отобранные рынки (с историей) не качаем заново
         for line in existing.read_text().splitlines():
             if line.strip():
@@ -42,7 +44,7 @@ def cmd_select(a) -> int:
     try:
         _select_loop(a, keep, quota, out)
     finally:
-        path = out / "markets.jsonl"
+        path = out / a.file
         path.write_text("\n".join(m.to_json() for v in keep.values() for m in v) + "\n")
         print("отобрано: " + ", ".join(f"{k} {len(v)}" for k, v in keep.items()) + f" → {path}")
     vols = sorted(m.volume for v in keep.values() for m in v)
@@ -80,7 +82,8 @@ async def _forecast(a) -> int:
     from forecast_bot import ai_guard, guarded_llm
     from forecast_bot.polymarket import forecaster
 
-    markets = [M.Market.from_json(l) for l in (B.data_dir() / "markets.jsonl").read_text().splitlines() if l.strip()]
+    markets = load_markets(a.files)
+    cache = load_gdelt_cache() if a.mode == "gdelt" else {}
     res_path = B.data_dir() / "backtest.jsonl"
     done = {(r["market"], r["point"], r["mode"]) for r in B.load_results(res_path)}
     pts = a.points.split(",")
@@ -103,11 +106,12 @@ async def _forecast(a) -> int:
                 return 0
             research = ""
             if a.mode == "gdelt":
-                try:
-                    research = gdelt.as_research(gdelt.search(m.question, t))
-                except Exception as exc:
-                    stats[f"gdelt: {type(exc).__name__}"] += 1
-                    research = "News search was unavailable; forecast from the question text alone."
+                # только из кэша (`gdelt-fetch`): прогноз «с поиском» без поиска смешал бы режимы — такой пропускаем
+                key = gdelt_key(m.id, point)
+                if key not in cache:
+                    stats["нет GDELT в кэше"] += 1
+                    continue
+                research = gdelt.as_research(cache[key])
             user = f"pm{m.id}-{point}-{a.mode}"
             token = guarded_llm.CURRENT_USER.set(user)
             t_start = time.time()
@@ -136,6 +140,66 @@ async def _forecast(a) -> int:
     return 0
 
 
+def load_markets(files: str) -> list:
+    out = []
+    for name in files.split(","):
+        path = B.data_dir() / name
+        if path.exists():
+            out += [M.Market.from_json(l) for l in path.read_text().splitlines() if l.strip()]
+    return out
+
+
+def gdelt_key(market_id: str, point: str) -> str:
+    return f"{market_id}|{point}"
+
+
+def load_gdelt_cache() -> dict:
+    path = B.data_dir() / "gdelt.jsonl"
+    cache = {}
+    if path.exists():
+        for line in path.read_text().splitlines():
+            if line.strip():
+                r = json.loads(line)
+                cache[r["key"]] = [gdelt.Article(datetime.fromisoformat(x["seen"]), x["title"], x["url"], x["domain"],
+                                                 x["language"]) for x in r["articles"]]
+    return cache
+
+
+def cmd_gdelt_fetch(a) -> int:
+    """Медленно скачать заголовки GDELT до каждой точки и сложить в кэш. Отказ по темпу — длинная пауза, не долбёжка."""
+    from forecast_bot.polymarket import http
+
+    path = B.data_dir() / "gdelt.jsonl"
+    cache = load_gdelt_cache()
+    pts, segs = a.points.split(","), set(a.segments.split(","))
+    todo = [(m, p, t) for m in load_markets(a.files) if B.segment(m.volume) in segs
+            for p, t in B.points(m.start, m.closed).items() if p in pts and gdelt_key(m.id, p) not in cache]
+    print(f"в кэше {len(cache)}, качать {len(todo)}", flush=True)
+    http.MIN_INTERVAL_S[urlparse(gdelt.URL).hostname] = a.pace
+    fails = 0
+    for i, (m, p, t) in enumerate(todo, 1):
+        try:
+            arts = gdelt.search(m.question, t, retries=1)
+        except RuntimeError as exc:
+            fails += 1
+            print(f"{i}/{len(todo)} {m.id} {p}: {str(exc)[:90]} — пауза {a.cooldown} с (подряд {fails})", flush=True)
+            if fails >= a.max_fails:
+                print("GDELT не отвечает — стоп, кэш сохранён")
+                return 0
+            time.sleep(a.cooldown)
+            continue
+        fails = 0
+        rec = {"key": gdelt_key(m.id, p), "t": t.isoformat(),
+               "articles": [{"seen": x.seen.isoformat(), "title": x.title, "url": x.url, "domain": x.domain,
+                             "language": x.language} for x in arts]}
+        with path.open("a") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        if i % 10 == 0:
+            print(f"{i}/{len(todo)}: последний {len(arts)} статей", flush=True)
+    print("готово")
+    return 0
+
+
 def cmd_report(_a) -> int:
     rows = B.load_results(B.data_dir() / "backtest.jsonl")
     print(f"строк: {len(rows)}; потрачено на этап ${B.stage_spent():.4f} из ${B.STAGE_CAP_USD}\n")
@@ -158,15 +222,26 @@ def main() -> int:
     s.add_argument("--tail", type=int, default=110)
     s.add_argument("--liquid", type=int, default=45)
     s.add_argument("--mid", type=int, default=0)
+    s.add_argument("--file", default="markets.jsonl")  # markets_pre.jsonl — контроль «до cutoff»
+    g = sub.add_parser("gdelt-fetch")
+    g.add_argument("--points", default="t50,t48")
+    g.add_argument("--segments", default="tail,liquid,mid")
+    g.add_argument("--files", default="markets.jsonl,markets_pre.jsonl")
+    g.add_argument("--pace", type=float, default=15.0)
+    g.add_argument("--cooldown", type=int, default=900)
+    g.add_argument("--max-fails", type=int, default=12)
     f = sub.add_parser("forecast")
     f.add_argument("--mode", choices=["none", "gdelt"], required=True)
     f.add_argument("--points", default="t50,t48")
-    f.add_argument("--segments", default="tail,liquid,mid")
+    f.add_argument("--segments", default="tail,liquid,mid,micro")
     f.add_argument("--limit", type=int, default=0)
+    f.add_argument("--files", default="markets.jsonl,markets_pre.jsonl")
     sub.add_parser("report")
     a = ap.parse_args()
     if a.cmd == "select":
         return cmd_select(a)
+    if a.cmd == "gdelt-fetch":
+        return cmd_gdelt_fetch(a)
     if a.cmd == "forecast":
         from forecast_bot import ai_guard, guarded_llm
 
