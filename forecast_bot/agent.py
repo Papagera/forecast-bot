@@ -46,7 +46,8 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {"series_id": {"type": "string"}}, "required": ["series_id"]}}},
     {"type": "function", "function": {
         "name": "stock_history",
-        "description": "Daily close prices from Stooq for a ticker (e.g. 'aapl.us', '^spx', 'btcusd'): recent closes and volatility.",
+        "description": "Daily closes from Yahoo Finance for a ticker (e.g. 'AAPL', '^GSPC' for S&P 500, '^VIX', "
+                       "'EURUSD=X', 'GC=F' gold futures, 'BTC-USD'): recent closes and volatility.",
         "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}}, "required": ["symbol"]}}},
 ]
 
@@ -132,20 +133,25 @@ def fred_series(series_id: str) -> str:
 
 
 def stock_history(symbol: str) -> str:
-    sym = re.sub(r"[^A-Za-z0-9.^_-]", "", symbol)[:20].lower()
+    """Дневные закрытия с Yahoo Finance chart API (без ключа). Stooq с 10.2026 отдаёт JS-проверку браузера вместо
+    данных — прежний инструмент молча возвращал пустоту, агент тратил на него шаги."""
+    sym = re.sub(r"[^A-Za-z0-9.^=_-]", "", symbol)[:20].upper()
     try:
-        r = requests.get("https://stooq.com/q/d/l/", params={"s": sym, "i": "d"}, timeout=20)
-        rows = list(csv.DictReader(io.StringIO(r.text)))
-    except Exception as exc:
-        return f"Ошибка Stooq: {type(exc).__name__}"
-    dates = [row.get("Date", "") for row in rows if row.get("Close")]
-    vals = []
-    for row in rows:
-        try:
-            vals.append(float(row["Close"]))
-        except (KeyError, ValueError, TypeError):
+        r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}",
+                         params={"range": "1y", "interval": "1d"},
+                         headers={"User-Agent": "Mozilla/5.0 forecast-bot research"}, timeout=20)
+        res = r.json()["chart"]["result"][0]
+    except Exception as exc:  # не JSON, нет тикера, сеть — ответ модели, не падение агента
+        return f"Ошибка Yahoo для {sym}: {type(exc).__name__} — проверь тикер (AAPL, ^GSPC, EURUSD=X, GC=F, BTC-USD)."
+    tz = res.get("meta", {}).get("gmtoffset", 0)
+    closes = res.get("indicators", {}).get("quote", [{}])[0].get("close") or []
+    dates, vals = [], []
+    for ts, cl in zip(res.get("timestamp") or [], closes):
+        if cl is None:
             continue
-    return _series_stats(dates[-260:], vals[-260:], f"Stooq {sym}")
+        dates.append(datetime.fromtimestamp(ts + tz, tz=timezone.utc).date().isoformat())
+        vals.append(round(float(cl), 6))
+    return _series_stats(dates[-260:], vals[-260:], f"Yahoo {sym}")
 
 
 # ─────────────────────────── цикл агента ────────────────────────────

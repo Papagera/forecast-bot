@@ -150,6 +150,15 @@ SOURCE_MUTATIONS = {
         "forecast_bot.bot", "        if parsed is not None:\n            options = PredictedOptionList(",
         "        if False:\n            options = PredictedOptionList(",
         "tests/test_mc.py::test_bot_sends_explicit_names_and_parses_without_llm_parser"),
+    "агент: котировки снова со Stooq": (
+        "forecast_bot.agent", 'f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}"', '"https://stooq.com/q/d/l/"',
+        "tests/test_agent.py::test_stock_history_reads_yahoo"),
+    "pulse: несуществующий сезон всё равно запрашивается": (
+        "forecast_bot.run", "and not tournament_exists(tournament):", "and False:",
+        "tests/test_pulse.py::test_missing_season_is_not_fetched"),
+    "pulse: отказ «нет турнира» не кэшируется": (
+        "forecast_bot.run", "if hit and (hit[0] or now - hit[1] < MISSING_TTL_S):", "if hit and hit[0]:",
+        "tests/test_pulse.py::test_tournament_exists_caches_missing_for_an_hour"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

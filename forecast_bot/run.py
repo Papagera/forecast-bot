@@ -80,6 +80,30 @@ def expand_tournaments(names: list[str], today: Optional[dt.date] = None) -> tup
     return ids, refresh
 
 
+_TOURNAMENT_SEEN: dict[str, tuple[bool, float]] = {}
+MISSING_TTL_S = 3600
+
+
+def tournament_exists(slug: str, now: Optional[float] = None) -> bool:
+    """Есть ли турнир (один лёгкий запрос). Нужен, потому что forecasting-tools на несуществующий слаг делает
+    3 повтора с паузами — на двух будущих сезонах Market Pulse это минуты на каждом опросе цикла.
+    Отрицательный ответ кэшируется на час; при сетевой ошибке считаем «есть» — пусть решает обычный путь."""
+    import requests
+
+    now = now or time.time()
+    hit = _TOURNAMENT_SEEN.get(slug)
+    if hit and (hit[0] or now - hit[1] < MISSING_TTL_S):
+        return hit[0]
+    try:
+        r = requests.get(f"https://www.metaculus.com/api/projects/tournaments/{slug}/",
+                         headers={"Authorization": f"Token {os.environ.get('METACULUS_TOKEN', '')}"}, timeout=20)
+        exists = r.status_code != 404
+    except Exception:
+        return True
+    _TOURNAMENT_SEEN[slug] = (exists, now)
+    return exists
+
+
 def needs_update(last_submit: Optional[float], close_ts: Optional[float], now: float) -> bool:
     """Spot-турнир: прогнозировать снова? Первый раз — да; потом раз в сутки; в последние 12 ч — раз в 3 ч."""
     if last_submit is None:
@@ -182,6 +206,9 @@ async def run(
 
     refresh = refresh or set()
     for tournament in tournaments:
+        if tournament in refresh and isinstance(tournament, str) and not tournament_exists(tournament):
+            logger.info("сезона %s пока нет — пропускаем", tournament)
+            continue
         try:
             questions = await asyncio.to_thread(client.get_all_open_questions_from_tournament, tournament)
         except Exception as exc:
