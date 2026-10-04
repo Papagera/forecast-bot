@@ -29,6 +29,14 @@ logger = logging.getLogger("forecast_bot")
 # Турниры (forecasting_tools/helpers/metaculus_client.py, 0.3.2): Fall 2026 FutureEval = 33121,
 # MiniBench — слаг, сам переходит на новый двухнедельный раунд (текущий раунд = project 33125).
 TOURNAMENTS = {"fall": 33121, "minibench": "minibench"}
+# Market Pulse (spot peer score: считается только прогноз на момент закрытия вопроса). Сезон раз в квартал,
+# слаг market-pulse-YYqN; новый сезон подхватывается сам — без деплоя, включение — переменной репо
+# FORECAST_TOURNAMENTS (например «fall,minibench,pulse»). Любой другой слаг/ID добавляется туда же через запятую.
+PULSE = "pulse"
+# Обновления для spot-турниров: прогноз освежается раз в сутки и обязательно в последние 12 ч до закрытия.
+UPDATE_EVERY_S = 24 * 3600
+FINAL_WINDOW_S = 12 * 3600
+FINAL_MIN_AGE_S = 3 * 3600
 # Песочница Metaculus для проверки бота (main.py шаблона, режим test_questions) — только для dry-run.
 TEST_TOURNAMENT = "bot-testing-area"
 ASKNEWS_MONTHLY_CAP = 900  # решение income 02.10.2026: при лимите AskNews 1k/мес
@@ -36,6 +44,50 @@ PER_QUESTION_DAY_CALLS = 40  # ~16 вызовов на вопрос (1 свод�
 # Сколько после окна цикла ещё можно НАЧАТЬ вопрос (агент ≈ 1–3 мин на вопрос): 2 мин подготовки job +
 # 335 мин цикла + 5 мин + последний вопрос ≈ 345 < timeout 350 мин.
 LOOP_GRACE_S = 300
+
+
+def pulse_slugs(today: dt.date) -> list[str]:
+    """Слаги Market Pulse вокруг даты: прошлый, текущий и следующий квартал (несуществующие — пропускаются)."""
+    q = (today.month - 1) // 3 + 1
+    out = []
+    for dq in (-1, 0, 1):
+        y, qq = today.year, q + dq
+        if qq == 0:
+            y, qq = y - 1, 4
+        elif qq == 5:
+            y, qq = y + 1, 1
+        out.append(f"market-pulse-{y % 100:02d}q{qq}")
+    return out
+
+
+def expand_tournaments(names: list[str], today: Optional[dt.date] = None) -> tuple[list, set]:
+    """Имена из CLI/переменной → (ID/слаги, множество spot-турниров с обновлениями)."""
+    today = today or dt.datetime.now(dt.timezone.utc).date()
+    ids, refresh = [], set()
+    for n in (x.strip() for x in names if x.strip()):
+        if n == PULSE:
+            for slug in pulse_slugs(today):
+                ids.append(slug)
+                refresh.add(slug)
+        elif n in TOURNAMENTS:
+            ids.append(TOURNAMENTS[n])
+        elif n == "test":
+            ids.append(TEST_TOURNAMENT)
+        else:
+            ids.append(int(n) if n.isdigit() else n)
+            if n.startswith("market-pulse-"):
+                refresh.add(n)
+    return ids, refresh
+
+
+def needs_update(last_submit: Optional[float], close_ts: Optional[float], now: float) -> bool:
+    """Spot-турнир: прогнозировать снова? Первый раз — да; потом раз в сутки; в последние 12 ч — раз в 3 ч."""
+    if last_submit is None:
+        return True
+    age = now - last_submit
+    if close_ts is not None and close_ts - now <= FINAL_WINDOW_S:
+        return age >= FINAL_MIN_AGE_S
+    return age >= UPDATE_EVERY_S
 
 
 def submit_allowed(mode: str, env: Optional[dict] = None) -> bool:
@@ -117,6 +169,7 @@ async def run(
     asknews_cap: int = ASKNEWS_MONTHLY_CAP,
     variant: Optional[str] = None,
     stop_at: Optional[float] = None,
+    refresh: Optional[set] = None,
 ) -> RunResult:
     from forecast_bot import ai_guard, guarded_llm, journal as J
 
@@ -127,8 +180,15 @@ async def run(
     model = getattr(bot.get_llm("default", "llm"), "model", None)
     done = 0
 
+    refresh = refresh or set()
     for tournament in tournaments:
-        questions = await asyncio.to_thread(client.get_all_open_questions_from_tournament, tournament)
+        try:
+            questions = await asyncio.to_thread(client.get_all_open_questions_from_tournament, tournament)
+        except Exception as exc:
+            if tournament in refresh:  # сезона Market Pulse ещё нет (или уже нет) — это норма
+                logger.info("турнир %s недоступен: %s", tournament, type(exc).__name__)
+                continue
+            raise
         for q in questions:
             if limit is not None and done >= limit:
                 return result
@@ -137,8 +197,13 @@ async def run(
                 result.stopped_reason = "время цикла вышло"
                 return result
             qid = q.id_of_question
+            if tournament in refresh:
+                # Spot-очки: важен прогноз на момент закрытия → обновляем по расписанию, «не дважды» не действует.
+                close_ts = q.close_time.timestamp() if q.close_time else None
+                if submit and not needs_update(journal.last_submitted_at(qid), close_ts, time.time()):
+                    continue
             # «Не дважды»: флаг Metaculus по бот-аккаунту + свой журнал (только реальные отправки).
-            if submit and (q.already_forecasted or journal.already_submitted(qid)):
+            elif submit and (q.already_forecasted or journal.already_submitted(qid)):
                 continue
 
             base = dict(run_id=result.run_id, question_id=qid, post_id=q.id_of_post,
@@ -317,6 +382,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="forecast_bot.run")
     ap.add_argument("--mode", choices=["dry", "submit"], default="dry")
     ap.add_argument("--tournament", choices=["minibench", "fall", "both", "test"], default="minibench")
+    ap.add_argument("--tournaments", default=None,
+                    help="список через запятую: fall,minibench,pulse,<слаг или ID> (перекрывает --tournament)")
+    ap.add_argument("--quant-hints", action="store_true", help="статистическая база по рядам (Market Pulse)")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--model", default=None, help="основная модель (перекрывает FORECAST_MODEL)")
     ap.add_argument("--predictions", type=int, default=None, help="прогнозов на вопрос (перекрывает FORECAST_PREDICTIONS)")
@@ -335,6 +403,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = ap.parse_args(argv)
     if args.research:
         os.environ["FORECAST_RESEARCH"] = args.research
+    if args.quant_hints:
+        os.environ["FORECAST_QUANT_HINTS"] = "1"
     if args.reasoning:
         os.environ["FORECAST_REASONING"] = args.reasoning
     if args.agent_model:
@@ -360,10 +430,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("Отправка запрещена: нужен FORECAST_SUBMIT=1 в .env (ставится после «да» income). Прогон не начат.")
         return 3
 
-    if args.tournament == "test" and args.mode != "dry":
+    if args.tournaments:
+        names = [n for n in args.tournaments.split(",") if n.strip()]
+    else:
+        names = ["minibench", "fall"] if args.tournament == "both" else [args.tournament]
+    if "test" in names and args.mode != "dry":
         print("bot-testing-area — только для dry-run. Прогон не начат.")
         return 4
-    names = ["minibench", "fall"] if args.tournament == "both" else [args.tournament]
     with run_lock() as acquired:
         if not acquired:
             print("Прошлый прогон ещё идёт — выходим.")
@@ -375,14 +448,15 @@ def main(argv: Optional[list[str]] = None) -> int:
         from forecast_bot.journal import Journal
 
         client, bot, journal = MetaculusClient(), ForecastBot(), Journal(paths.journal_db())
-        tournaments = [TOURNAMENTS.get(n, TEST_TOURNAMENT) for n in names]
+        tournaments, refresh = expand_tournaments(names)
 
         if args.loop_minutes:
             hard_stop = time.time() + args.loop_minutes * 60 + LOOP_GRACE_S
 
             async def run_once() -> RunResult:
-                return await run(client=client, bot=bot, journal=journal, tournaments=tournaments,
-                                 submit=submit, limit=args.limit, stop_at=hard_stop)
+                ids, spot = expand_tournaments(names)  # слаг сезона Market Pulse пересчитывается на каждом опросе
+                return await run(client=client, bot=bot, journal=journal, tournaments=ids,
+                                 submit=submit, limit=args.limit, stop_at=hard_stop, refresh=spot)
 
             stats = asyncio.run(poll_loop(run_once=run_once, duration_s=args.loop_minutes * 60,
                                           poll_s=args.poll_minutes * 60, run_budget=args.run_budget))
@@ -392,7 +466,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         guarded_llm.start_run(args.run_budget)
         result = asyncio.run(run(client=client, bot=bot, journal=journal, tournaments=tournaments,
-                                 submit=submit, limit=args.limit))
+                                 submit=submit, limit=args.limit, refresh=refresh))
     if not submit:
         report_path = paths.reports_dir() / f"dry-run-{dt.date.today():%Y-%m-%d}-{result.run_id}.md"
         write_dry_report(result, report_path)

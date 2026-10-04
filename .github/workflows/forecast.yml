@@ -13,6 +13,8 @@
 # - деньги: $1 на каждый опрос (--run-budget) + $6 в сутки по леджеру ai_guard (APP_LIMITS["forecast"]),
 #   суточный потолок проверяется перед каждым опросом и на каждом вызове модели;
 #   кэш потерян → остаётся лимит опроса, страховка — лимит $50 на самом ключе OpenRouter.
+# - турниры: переменная репо FORECAST_TOURNAMENTS (по умолчанию «fall,minibench»); «pulse» — Market Pulse,
+#   сезон (market-pulse-YYqN) подхватывается сам, прогноз обновляется по расписанию (spot-очки на закрытии).
 # - concurrency: два цикла одновременно не идут. Новый запуск (cron/перезапуск), пока цикл идёт, встаёт в очередь
 #   и ждёт; GitHub держит в очереди один ожидающий и заменяет его более свежим — дублей не копится.
 name: forecast
@@ -70,7 +72,8 @@ jobs:
       # Вариант B (блок 2.1): исследует Haiku 4.5 с проверкой чисел по источникам, решает Opus 5.5 high.
       - name: Цикл прогнозов и отправки
         run: >
-          python -m forecast_bot.run --mode submit --tournament both
+          python -m forecast_bot.run --mode submit
+          --tournaments "${{ vars.FORECAST_TOURNAMENTS || 'fall,minibench' }}" --quant-hints
           --research agent --agent-model openrouter/anthropic/claude-haiku-4.5 --agent-max-news 2
           --model openrouter/anthropic/claude-opus-5.5 --reasoning high --predictions 1 --run-budget 1.0
           --loop-minutes 335 --poll-minutes 10

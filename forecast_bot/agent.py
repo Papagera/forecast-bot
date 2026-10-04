@@ -196,7 +196,9 @@ class ResearchAgent:
     async def _loop(self, question: Any) -> str:
         t0 = time.time()
         self.news_calls = 0
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        import os
+
+        today = os.environ.get("FORECAST_ASOF", "").strip() or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         user_msg = (f"Today is {today}.\nQuestion: {question.question_text}\n\n"
                     f"Resolution criteria: {question.resolution_criteria}\n\nFine print: {question.fine_print}\n\n"
                     f"Background: {question.background_info}\n\nQuestion closes: {question.close_time}; "
