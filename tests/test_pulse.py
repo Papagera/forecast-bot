@@ -188,6 +188,53 @@ def test_market_series_question_skips_search(fake_llm, fake_asknews, monkeypatch
     assert res.count("ok") == 1 and calls == [] and res.rows[0]["asknews_calls"] == 0
 
 
+class _R:
+    def __init__(self, code):
+        self.status_code = code
+
+
+def test_tournament_exists_caches_missing_for_an_hour(monkeypatch):
+    calls = []
+
+    def fake_get(url, headers=None, timeout=None):
+        calls.append(url)
+        return _R(404 if "27q1" in url else 200)
+
+    import requests
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    monkeypatch.setattr(R, "_TOURNAMENT_SEEN", {})
+    assert R.tournament_exists("market-pulse-27q1", now=1000.0) is False
+    assert R.tournament_exists("market-pulse-27q1", now=1000.0 + 1800) is False and len(calls) == 1
+    assert R.tournament_exists("market-pulse-27q1", now=1000.0 + 3700) is False and len(calls) == 2
+    assert R.tournament_exists("market-pulse-26q4", now=1000.0) is True
+    assert R.tournament_exists("market-pulse-26q4", now=1000.0 + 99999) is True and len(calls) == 3
+
+    def boom(*a, **k):
+        raise ConnectionError("offline")
+
+    monkeypatch.setattr(requests, "get", boom)
+    monkeypatch.setattr(R, "_TOURNAMENT_SEEN", {})
+    assert R.tournament_exists("market-pulse-26q4") is True and R._TOURNAMENT_SEEN == {}
+
+
+def test_missing_season_is_not_fetched(fake_llm, fake_asknews, monkeypatch):
+    from forecast_bot import paths
+
+    fetched = []
+
+    class Client(FakeMetaculusClient):
+        def get_all_open_questions_from_tournament(self, t):
+            fetched.append(t)
+            return super().get_all_open_questions_from_tournament(t)
+
+    monkeypatch.setenv("FORECAST_PREDICTIONS", "1")
+    monkeypatch.setattr(R, "tournament_exists", lambda slug, now=None: slug != "market-pulse-27q1")
+    _run(Client(subquestions()), Journal(paths.journal_db()), ["market-pulse-27q1", "market-pulse-26q4"],
+         {"market-pulse-27q1", "market-pulse-26q4"}, submit=False)
+    assert fetched == ["market-pulse-26q4"]
+
+
 def test_period_parsing():
     assert Q.period("Sep 21 - Oct 2", 2026) == (date(2026, 9, 21), date(2026, 10, 2))
     assert Q.period("Jul 13 - Jul 24", 2026) == (date(2026, 7, 13), date(2026, 7, 24))
