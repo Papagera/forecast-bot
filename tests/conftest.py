@@ -1,11 +1,16 @@
 """Офлайн-окружение: фейковые ключи, леджер/журнал во tmp, сеть закрыта, LLM и AskNews — фейки."""
 from __future__ import annotations
 
+import os
 import socket
 import sys
 from pathlib import Path
 
 import pytest
+
+# litellm на первом импорте скачивает карту цен моделей с GitHub (get_model_cost_map.py). Без этого флага тесты
+# ходили в сеть на сборке (до блокировки сокета), а запуск отдельного файла падал на блокировке.
+os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))

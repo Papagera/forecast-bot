@@ -175,6 +175,27 @@ SOURCE_MUTATIONS = {
         "forecast_bot.bot", "        except (BudgetExceeded, UnguardedLlmCall):\n            raise",
         "        except ZeroDivisionError:\n            raise",
         "tests/test_agent.py::test_guard_refusal_in_research_is_not_swallowed"),
+    "polymarket: цена в момент t (утечка)": (
+        "forecast_bot.polymarket.markets", "prev = [p for t, p in self.history if t < ts]",
+        "prev = [p for t, p in self.history if t <= ts]", "tests/test_polymarket.py::test_price_before_is_strict"),
+    "polymarket: GDELT без отсечки на клиенте": (
+        "forecast_bot.polymarket.gdelt", "return [a for a in arts if a.seen < cutoff]", "return list(arts)",
+        "tests/test_polymarket.py::test_gdelt_cutoff_is_enforced_client_side"),
+    "polymarket: любой хост": (
+        "forecast_bot.polymarket.http", 'if urlparse(url).scheme != "https" or host not in ALLOWED_HOSTS:', "if False:",
+        "tests/test_polymarket.py::test_http_allows_only_get_to_whitelist"),
+    "polymarket: рынки дольше 30 дней": (
+        "forecast_bot.polymarket.markets", "if (closed - start).total_seconds() / 86400 > MAX_LIFE_DAYS:", "if False:",
+        "tests/test_polymarket.py::test_from_gamma_rejects"),
+    "polymarket: сделка без порога": (
+        "forecast_bot.polymarket.backtest", "    if abs(edge) < thr:\n        return None", "    if False:\n        return None",
+        "tests/test_polymarket.py::test_paper_trade_threshold_side_fee_and_pnl"),
+    "polymarket: без комиссии": (
+        "forecast_bot.polymarket.backtest", "fee = fee_rate * c * (1 - c)", "fee = 0.0",
+        "tests/test_polymarket.py::test_paper_trade_threshold_side_fee_and_pnl"),
+    "polymarket: потолок этапа не считается": (
+        "forecast_bot.polymarket.backtest", "return STAGE_CAP_USD - stage_spent()", "return STAGE_CAP_USD",
+        "tests/test_polymarket.py::test_stage_cap_from_ledger"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

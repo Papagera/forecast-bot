@@ -71,6 +71,8 @@ APP_LIMITS = {
     "forecast": {"day_usd": 6.0},
     # Замеры вариантов на Mac (блок 2.1, income 03.10.2026): 4 варианта × ~16 вопросов ≈ $5 (≈оценка).
     "forecast-lab": {"day_usd": 8.0},
+    # Этап 3 Polymarket (ТЗ этапа 3, income 04.10.2026): $2/сутки; потолок этапа $20 — в polymarket/backtest.py.
+    "polymarket": {"day_usd": 2.0},
 }
 
 APP_PROVIDER_LIMITS: dict[str, dict[str, dict[str, float]]] = {}
