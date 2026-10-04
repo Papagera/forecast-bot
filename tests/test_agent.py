@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 from fakes import FakeMetaculusClient, questions
@@ -102,3 +103,38 @@ def test_guarded_completion_counts_and_blocks_budget(fake_llm, monkeypatch):
         asyncio.run(guarded_llm.guarded_completion("openrouter/anthropic/claude-opus-5.5",
                                                    [{"role": "user", "content": "x"}], max_tokens=100))
     assert fake_llm.calls == []
+
+
+class _Resp:
+    def __init__(self, payload=None, text="<html>verify you are human</html>"):
+        self._payload, self.text = payload, text
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("not json")
+        return self._payload
+
+
+def test_stock_history_reads_yahoo(monkeypatch):
+    payload = {"chart": {"result": [{"meta": {"gmtoffset": -14400},
+                                     "timestamp": [1790000000 + 86400 * i for i in range(70)],
+                                     "indicators": {"quote": [{"close": [100 + i for i in range(69)] + [None]}]}}]}}
+    seen = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        seen["url"] = url
+        return _Resp(payload)
+
+    monkeypatch.setattr(A.requests, "get", fake_get)
+    out = A.stock_history("aapl")
+    assert "query1.finance.yahoo.com" in seen["url"] and seen["url"].endswith("/AAPL")
+    assert out.startswith("Yahoo AAPL: 69 наблюдений") and "последнее 168" in out
+
+
+def test_stock_history_challenge_page_is_explicit_error(monkeypatch):
+    monkeypatch.setattr(A.requests, "get", lambda *a, **k: _Resp(None))
+    assert A.stock_history("^GSPC").startswith("Ошибка Yahoo для ^GSPC")
+
+
+def test_no_tool_points_to_stooq():
+    assert not any("stooq" in json.dumps(t).lower() for t in A.TOOLS)
