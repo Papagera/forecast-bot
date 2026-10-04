@@ -69,12 +69,13 @@ jobs:
           key: forecast-state-${{ github.run_id }}
           restore-keys: forecast-state-
 
-      # Вариант B (блок 2.1): исследует Haiku 4.5 с проверкой чисел по источникам, решает Opus 5.5 high.
+      # Вариант B (блок 2.1): исследует агент с проверкой чисел по источникам, решает Opus 5.5 high.
+      # Исследователь — Gemini 3.8 Flash с 05.10.2026 (замер H/S/G; Haiku 4.5 retirement не раньше 15.10.2026).
       - name: Цикл прогнозов и отправки
         run: >
           python -m forecast_bot.run --mode submit
           --tournaments "${{ vars.FORECAST_TOURNAMENTS || 'fall,minibench' }}" --quant-hints
-          --research agent --agent-model openrouter/anthropic/claude-haiku-4.5 --agent-max-news 2
+          --research agent --agent-model openrouter/google/gemini-3.8-flash --agent-max-news 2
           --model openrouter/anthropic/claude-opus-5.5 --reasoning high --predictions 1 --run-budget 1.0
           --loop-minutes 335 --poll-minutes 10
 

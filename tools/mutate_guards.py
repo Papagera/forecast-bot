@@ -160,6 +160,9 @@ SOURCE_MUTATIONS = {
     "pulse: отказ «нет турнира» не кэшируется": (
         "forecast_bot.run", "if hit and (hit[0] or now - hit[1] < MISSING_TTL_S):", "if hit and hit[0]:",
         "tests/test_pulse.py::test_tournament_exists_caches_missing_for_an_hour"),
+    "модель боя без цены в гарде": (
+        "forecast_bot.ai_guard", '    ("openrouter", "openrouter/google/gemini-3.8-flash"): (0.00075, 0.00375),', "",
+        "tests/test_run.py::test_workflow_models_have_prices"),
     "AskNews упал → агент роняет вопрос": (
         "forecast_bot.agent", "        try:\n            return await self._run_tool_inner(name, args)\n        except Exception as exc:",
         "        try:\n            return await self._run_tool_inner(name, args)\n        except ZeroDivisionError as exc:",
