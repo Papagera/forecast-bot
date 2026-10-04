@@ -122,6 +122,11 @@ def dedupe(rows: list[dict]) -> list[dict]:
     return out
 
 
+def events(rows: list[dict]) -> int:
+    """≈число независимых событий: рынки одного матча/вопроса-сетки закрываются в один час (поле closed, если есть)."""
+    return len({(r.get("closed") or r["market"])[:13] for r in rows})
+
+
 def report(rows: Iterable[dict]) -> str:
     """Таблица «сегмент × точка × режим»: Brier/log бот vs рынок vs смесь; бумажная прибыль по порогам."""
     from collections import defaultdict
@@ -132,20 +137,23 @@ def report(rows: Iterable[dict]) -> str:
     groups = defaultdict(list)
     for r in rows:
         groups[(r["pre_cutoff"], r["segment"], r["point"], r["mode"])].append(r)
-    out = ["| cutoff | сегмент | точка | поиск | n | Brier бот | Brier рынок | Brier смесь | log бот | log рынок |",
-           "|---|---|---|---|---|---|---|---|---|---|"]
+    out = ["| cutoff | сегмент | точка | поиск | n | событий≈ | Brier бот | Brier рынок | Brier смесь | log бот | log рынок |",
+           "|---|---|---|---|---|---|---|---|---|---|---|"]
     for key in sorted(groups):
         rs = groups[key]
         b = lambda k: sum(scores(r[k], r["outcome"])["brier"] for r in rs) / len(rs)  # noqa: E731
         lg = lambda k: sum(scores(r[k], r["outcome"])["log"] for r in rs) / len(rs)  # noqa: E731
         for r in rs:
             r["p_blend"] = blend(r["p_bot"], r["p_mkt"])
-        out.append(f"| {'до' if key[0] else 'после'} | {key[1]} | {key[2]} | {key[3]} | {len(rs)} | {b('p_bot'):.3f} | "
+        out.append(f"| {'до' if key[0] else 'после'} | {key[1]} | {key[2]} | {key[3]} | {len(rs)} | {events(rs)} | "
+                   f"{b('p_bot'):.3f} | "
                    f"{b('p_mkt'):.3f} | {b('p_blend'):.3f} | {lg('p_bot'):.3f} | {lg('p_mkt'):.3f} |")
     out += ["", "| cutoff | сегмент | точка | поиск | порог | сделок | доля прибыльных | ROI после издержек |",
             "|---|---|---|---|---|---|---|---|"]
     for key in sorted(groups):
         rs = groups[key]
+        if key[1] == "micro":
+            continue  # без торгов цена — застывшая котировка открытия: «прибыль» там не исполнима
         for thr in THRESHOLDS:
             trades = [t for r in rs if (t := paper_trade(r["p_bot"], r["p_mkt"], r["outcome"], thr,
                                                           SPREAD[r["segment"]], r["fee_rate"]))]

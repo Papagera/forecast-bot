@@ -122,6 +122,15 @@ def test_points_respect_lifetime():
     assert list(B.points(s, s + timedelta(days=4))) == ["t48"]    # t50 совпал бы с t48 — остаётся только t48
 
 
+def test_report_skips_micro_trades_and_counts_events():
+    base = {"pre_cutoff": False, "mode": "none", "p_bot": 0.9, "p_mkt": 0.5, "outcome": 1, "fee_rate": 0.0,
+            "point": "t48", "t": "2026-08-03T00:00:00+00:00"}
+    rows = [dict(base, market=f"m{i}", volume=100, closed="2026-08-05T10:00:00+00:00") for i in range(3)]
+    text = B.report(rows)
+    assert "| после | micro | t48 | none | 3 | 1 |" in text      # три рынка одного матча = одно событие
+    assert "| micro |" not in text.split("ROI после издержек")[1]   # сделок на микро не показываем
+
+
 def test_report_dedupes_coinciding_points():
     base = {"pre_cutoff": False, "segment": "tail", "mode": "none", "p_bot": 0.8, "p_mkt": 0.5, "outcome": 1,
             "fee_rate": 0.04, "market": "m1"}

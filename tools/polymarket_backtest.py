@@ -129,7 +129,7 @@ async def _forecast(a) -> int:
                     return 0
                 continue
             rec = {"market": m.id, "question": m.question, "url": m.url, "segment": B.segment(m.volume),
-                   "volume": m.volume, "point": point, "t": t.isoformat(), "mode": a.mode, "p_mkt": p_mkt,
+                   "volume": m.volume, "closed": m.closed.isoformat(), "point": point, "t": t.isoformat(), "mode": a.mode, "p_mkt": p_mkt,
                    "p_bot": p_bot, "outcome": m.outcome, "fee_rate": m.fee_rate, "neg_risk": m.neg_risk,
                    "pre_cutoff": t < B.CUTOFF, "cost_usd": cost, "llm_calls": calls}
             with res_path.open("a") as fh:
@@ -205,6 +205,9 @@ def cmd_gdelt_fetch(a) -> int:
 
 def cmd_report(_a) -> int:
     rows = B.load_results(B.data_dir() / "backtest.jsonl")
+    closed = {m.id: m.closed.isoformat() for m in load_markets("markets.jsonl,markets_pre.jsonl")}
+    for r in rows:
+        r.setdefault("closed", closed.get(r["market"]))
     print(f"строк: {len(rows)}; потрачено на этап ${B.stage_spent():.4f} из ${B.STAGE_CAP_USD}\n")
     print(B.report(rows))
     return 0
