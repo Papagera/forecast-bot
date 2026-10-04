@@ -250,7 +250,7 @@ def test_cli_variant_b_flags(monkeypatch):
     async def fake_run(**k):
         bot = k["bot"]
         seen.update(model=bot.get_llm("default", "llm").model, research=bot.get_llm("researcher"),
-                    news=bot.asknews_calls_per_research, agent=os.environ.get("FORECAST_AGENT_MODEL"),
+                    news=bot.agent_max_searches, agent=os.environ.get("FORECAST_AGENT_MODEL"),
                     effort=bot.get_llm("default", "llm").litellm_kwargs.get("reasoning_effort"))
         return R.RunResult(run_id="t", submit=False)
 

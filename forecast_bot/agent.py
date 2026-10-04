@@ -34,7 +34,8 @@ SOFT_STOP_SHARE = 0.6
 TOOLS = [
     {"type": "function", "function": {
         "name": "search_news",
-        "description": "Search recent news (last 48 hours) about a topic. Returns article titles, summaries, dates, URLs.",
+        "description": "Search the web (recent news, official pages, data) about a topic. Returns page titles, URLs "
+                       "and excerpts.",
         "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
     {"type": "function", "function": {
         "name": "fetch_url",
