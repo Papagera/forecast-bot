@@ -138,3 +138,52 @@ def test_stock_history_challenge_page_is_explicit_error(monkeypatch):
 
 def test_no_tool_points_to_stooq():
     assert not any("stooq" in json.dumps(t).lower() for t in A.TOOLS)
+
+
+class _WalletEmpty(Exception):
+    pass
+
+
+def test_agent_survives_asknews_wallet_empty(agent_env, fake_llm, monkeypatch):
+    """05.10.2026: AskNews 402001 «wallet balance is depleted» ронял исследование → вопрос без прогноза."""
+    from forecast_bot.bot import ForecastBot
+
+    calls = []
+
+    async def broken(self, query):
+        calls.append(query)
+        raise _WalletEmpty("APIError: 402001 - Your wallet balance is depleted")
+
+    monkeypatch.setattr(ForecastBot, "_asknews_latest", broken)
+    fake_llm.tool_plan = ["search_news", "search_news", "fred_series"]
+    result, _ = _run_one()
+    row, = result.rows
+    assert row["status"] == "ok" and len(calls) == 1  # второй поиск на том же вопросе не пробуем
+    assert any("Инструмент search_news недоступен" in p or "FRED UNRATE" in p for p in fake_llm.prompts)
+
+
+def test_asknews_latest_mode_survives_wallet_empty(fake_llm, fake_asknews, monkeypatch):
+    from forecast_bot.bot import ForecastBot
+
+    async def broken(self, query):
+        raise _WalletEmpty("402001")
+
+    monkeypatch.setattr(ForecastBot, "_asknews_latest", broken)
+    monkeypatch.setenv("FORECAST_RESEARCH", "asknews-latest")
+    monkeypatch.setenv("FORECAST_PREDICTIONS", "1")
+    result, _ = _run_one()
+    assert result.rows[0]["status"] == "ok"
+    assert any("News search was unavailable" in p for p in fake_llm.prompts if '"Probability: ZZ%"' in p)
+
+
+def test_guard_refusal_in_research_is_not_swallowed(fake_llm, fake_asknews, monkeypatch):
+    from forecast_bot.bot import ForecastBot
+
+    async def refused(self, query):
+        raise ai_guard.BudgetExceeded("дневной лимит")
+
+    monkeypatch.setattr(ForecastBot, "_asknews_latest", refused)
+    monkeypatch.setenv("FORECAST_RESEARCH", "asknews-latest")
+    monkeypatch.setenv("FORECAST_PREDICTIONS", "1")
+    result, _ = _run_one()
+    assert result.rows[0]["status"] != "ok"

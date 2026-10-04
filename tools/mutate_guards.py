@@ -66,7 +66,8 @@ SOURCE_MUTATIONS = {
         "forecast_bot.ai_guard", '"forecast": {"day_usd": 6.0},', '"forecast": {"day_usd": 1e9},',
         "tests/test_run.py::test_daily_cap_counts_earlier_runs_from_saved_ledger"),
     "агент: новости без лимита": (
-        "forecast_bot.agent", "if self.news is None or self.news_calls >= self.max_news:", "if self.news is None:",
+        "forecast_bot.agent", "if self.news is None or self.news_failed or self.news_calls >= self.max_news:",
+        "if self.news is None or self.news_failed:",
         "tests/test_agent.py::test_news_calls_capped_per_question"),
     "агент: шаги без лимита": (
         "forecast_bot.agent", "last = step == MAX_STEPS or over_budget", "last = over_budget",
@@ -162,6 +163,18 @@ SOURCE_MUTATIONS = {
     "модель боя без цены в гарде": (
         "forecast_bot.ai_guard", '    ("openrouter", "openrouter/google/gemini-3.8-flash"): (0.00075, 0.00375),', "",
         "tests/test_run.py::test_workflow_models_have_prices"),
+    "AskNews упал → агент роняет вопрос": (
+        "forecast_bot.agent", "        try:\n            return await self._run_tool_inner(name, args)\n        except Exception as exc:",
+        "        try:\n            return await self._run_tool_inner(name, args)\n        except ZeroDivisionError as exc:",
+        "tests/test_agent.py::test_agent_survives_asknews_wallet_empty"),
+    "AskNews упал → режим «свежие» роняет вопрос": (
+        "forecast_bot.bot", "        except Exception as exc:\n            # Поиск упал",
+        "        except ZeroDivisionError as exc:\n            # Поиск упал",
+        "tests/test_agent.py::test_asknews_latest_mode_survives_wallet_empty"),
+    "отказ гарда глотается как сбой поиска": (
+        "forecast_bot.bot", "        except (BudgetExceeded, UnguardedLlmCall):\n            raise",
+        "        except ZeroDivisionError:\n            raise",
+        "tests/test_agent.py::test_guard_refusal_in_research_is_not_swallowed"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),
