@@ -88,6 +88,7 @@ PRICES: dict[tuple[str, str], tuple[float, float]] = {
     ("openrouter", "openrouter/openai/gpt-4o"): (0.0025, 0.01),
     ("openrouter", "openrouter/google/gemini-3.5-flash"): (0.0015, 0.009),
     ("openrouter", "openrouter/anthropic/claude-haiku-4.5"): (0.001, 0.005),
+    ("openrouter", "openrouter/google/gemini-3.8-flash"): (0.00075, 0.00375),  # openrouter.ai/api/v1/models, 04.10.2026
     ("openrouter", "openrouter/google/gemini-3.1-pro-preview"): (0.002, 0.012),
 }
 

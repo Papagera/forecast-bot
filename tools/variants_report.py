@@ -19,9 +19,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from forecast_bot import paths  # noqa: E402
 
-ORDER = ["A", "B", "C", "D"]
+ORDER = ["A", "B", "C", "D", "H", "S", "G"]
 LABEL = {"A": "агент Opus 5.5 high", "B": "исследование Haiku → итог Opus high",
-         "C": "исследование Haiku → итог Gemini Flash", "D": "шаблон Gemini Flash + AskNews"}
+         "C": "исследование Haiku → итог Gemini Flash", "D": "шаблон Gemini Flash + AskNews",
+         "H": "Haiku 4.5 → Opus high (эталон)", "S": "Sonnet 5.5 → Opus high", "G": "Gemini 3.8 Flash → Opus high"}
 
 
 def summary_value(qtype: str, pred: str):
@@ -62,13 +63,21 @@ def show(v) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--since-hours", type=float, default=6)
+    ap.add_argument("--variants", default=None, help="только эти варианты, через запятую")
+    ap.add_argument("--skip-mc", action="store_true",
+                    help="без multiple choice (до fix/mc-options выбор варианта искажал LLM-парсер)")
     args = ap.parse_args()
     conn = sqlite3.connect(paths.journal_db())
     conn.row_factory = sqlite3.Row
     rows = conn.execute("SELECT * FROM forecasts WHERE variant IS NOT NULL AND created_at >= ? ORDER BY id",
                         (time.time() - args.since_hours * 3600,)).fetchall()
+    keep = set(args.variants.split(",")) if args.variants else None
     latest: dict[tuple[str, int], sqlite3.Row] = {}
     for r in rows:
+        if keep and r["variant"] not in keep:
+            continue
+        if args.skip_mc and r["question_type"] == "MultipleChoiceQuestion":
+            continue
         latest[(r["variant"], r["question_id"])] = r  # последний прогон варианта по вопросу
     by_v = defaultdict(list)
     for (v, _), r in latest.items():

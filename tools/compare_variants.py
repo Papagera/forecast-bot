@@ -27,11 +27,17 @@ from forecast_bot.run import load_env_file  # noqa: E402
 OPUS = "openrouter/anthropic/claude-opus-5.5"
 HAIKU = "openrouter/anthropic/claude-haiku-4.5"
 FLASH = "openrouter/google/gemini-3.5-flash"
+SONNET = "openrouter/anthropic/claude-sonnet-5.5"
+FLASH38 = "openrouter/google/gemini-3.8-flash"  # актуальная Flash на OpenRouter, 04.10.2026
 VARIANTS = {
     "A": {"FORECAST_RESEARCH": "agent", "FORECAST_AGENT_MODEL": OPUS, "FORECAST_MODEL": OPUS, "FORECAST_REASONING": "high"},
     "B": {"FORECAST_RESEARCH": "agent", "FORECAST_AGENT_MODEL": HAIKU, "FORECAST_MODEL": OPUS, "FORECAST_REASONING": "high"},
     "C": {"FORECAST_RESEARCH": "agent", "FORECAST_AGENT_MODEL": HAIKU, "FORECAST_MODEL": FLASH, "FORECAST_REASONING": ""},
     "D": {"FORECAST_RESEARCH": "asknews-latest", "FORECAST_AGENT_MODEL": "", "FORECAST_MODEL": FLASH, "FORECAST_REASONING": ""},
+    # Замена Haiku 4.5 (retirement не раньше 15.10.2026): исследователь меняется, итог — Opus 5.5 high как в B.
+    "H": {"FORECAST_RESEARCH": "agent", "FORECAST_AGENT_MODEL": HAIKU, "FORECAST_MODEL": OPUS, "FORECAST_REASONING": "high"},
+    "S": {"FORECAST_RESEARCH": "agent", "FORECAST_AGENT_MODEL": SONNET, "FORECAST_MODEL": OPUS, "FORECAST_REASONING": "high"},
+    "G": {"FORECAST_RESEARCH": "agent", "FORECAST_AGENT_MODEL": FLASH38, "FORECAST_MODEL": OPUS, "FORECAST_REASONING": "high"},
 }
 SOURCES = ("bot-testing-area", 33108)  # песочница + Metaculus Cup Fall 2026 (открытые вопросы)
 QUOTA = {"BinaryQuestion": 7, "NumericQuestion": 4, "DiscreteQuestion": 1, "MultipleChoiceQuestion": 4}
@@ -54,7 +60,13 @@ def select_questions(n: int) -> list:
     client = MetaculusClient()
     if store.exists():
         ids = json.loads(store.read_text())
-        return [client.get_question_by_post_id(pid) for pid in ids]
+        out = []
+        for pid in ids:  # групповые посты разворачиваются в подвопросы; закрытые с тех пор — отбрасываются
+            got = client.get_question_by_post_id(pid, "unpack_subquestions")
+            for q in (got if isinstance(got, list) else [got]):
+                if str(getattr(q, "state", "")).endswith("OPEN") and q not in out:
+                    out.append(q)
+        return out
     pool = [q for t in SOURCES for q in client.get_all_open_questions_from_tournament(t)]
     picked, left = [], dict(QUOTA)
     for q in pool:
@@ -92,6 +104,10 @@ def main() -> int:
     questions = select_questions(args.n)
     print(f"вопросов: {len(questions)} — " + ", ".join(sorted({type(q).__name__ for q in questions})))
     guarded_llm.start_run(args.budget)
+    # Стенд гоняет несколько вариантов по ОДНИМ вопросам в один день: счётчик гарда «вызовов на вопрос в сутки»
+    # (40 в бою) иначе кончается на третьем варианте. Денежные потолки (forecast-lab $8/сутки, --budget) не трогаем.
+    from forecast_bot import ai_guard
+    ai_guard.LIMITS["per_user_day_calls"] = 200
     for name in args.variants.split(","):
         res = asyncio.run(run_variant(name, questions))
         print(f"вариант {name}: run {res.run_id} ok={res.count('ok')} error={res.count('error')} "

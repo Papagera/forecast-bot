@@ -177,7 +177,7 @@ def test_workflow_gates_and_limits():
     cmd = steps["Цикл прогнозов и отправки"]["run"]
     for part in ("--mode submit", "--tournaments \"${{ vars.FORECAST_TOURNAMENTS || 'fall,minibench' }}\"",
                  "--quant-hints", "--research agent",
-                 "--agent-model openrouter/anthropic/claude-haiku-4.5", "--agent-max-news 2",
+                 "--agent-model openrouter/google/gemini-3.8-flash", "--agent-max-news 2",
                  "--model openrouter/anthropic/claude-opus-5.5", "--reasoning high", "--predictions 1",
                  "--run-budget 1.0", "--loop-minutes 335", "--poll-minutes 10"):
         assert part in cmd
@@ -262,6 +262,18 @@ def test_cli_variant_b_flags(monkeypatch):
                    "--reasoning", "high", "--predictions", "1"]) == 0
     assert seen == {"model": "openrouter/anthropic/claude-opus-5.5", "research": "agent", "news": 2,
                     "agent": "openrouter/anthropic/claude-haiku-4.5", "effort": "high"}
+
+
+def test_workflow_models_have_prices():
+    """Модель из строки запуска без цены в ai_guard = отказ гарда (fail closed) на каждом вопросе в бою."""
+    import re
+    from pathlib import Path
+
+    wf = (Path(__file__).resolve().parent.parent / ".github/workflows/forecast.yml").read_text()
+    models = re.findall(r"--(?:agent-)?model (openrouter/\S+)", wf)
+    assert len(models) >= 2
+    for m in models:
+        assert ("openrouter", m) in ai_guard.PRICES, m
 
 
 def test_every_default_model_has_a_price():
