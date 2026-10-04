@@ -64,6 +64,7 @@ def test_from_gamma_accepts_clean_binary_and_reads_outcome_and_fee():
     {"umaResolutionStatus": "proposed"},                 # итог не окончательный
     {"outcomePrices": '["0.5", "0.5"]'},                 # 50/50 — неоднозначный итог
     {"startDate": "2026-06-01T00:00:00Z"},               # жил дольше 30 дней
+    {"startDate": "2026-08-19T00:00:00Z"},               # жил меньше 3 дней — нет обеих точек
 ])
 def test_from_gamma_rejects(kw):
     assert M.from_gamma(_gamma(**kw)) is None
@@ -108,6 +109,14 @@ def test_points_respect_lifetime():
     assert pts["t50"] == datetime(2026, 8, 6, tzinfo=UTC) and pts["t48"] == c - timedelta(hours=48)
     assert B.points(s, s + timedelta(hours=30)) == {}      # слишком короткий рынок — точек нет
     assert list(B.points(s, s + timedelta(hours=40))) == ["t50"]  # t50 = старт+16 ч (за 24 ч до закрытия), t48 нет
+    assert list(B.points(s, s + timedelta(days=4))) == ["t48"]    # t50 совпал бы с t48 — остаётся только t48
+
+
+def test_report_dedupes_coinciding_points():
+    base = {"pre_cutoff": False, "segment": "tail", "mode": "none", "p_bot": 0.8, "p_mkt": 0.5, "outcome": 1,
+            "fee_rate": 0.04, "market": "m1"}
+    rows = [dict(base, point="t50", t="2026-08-03T00:00:00+00:00"), dict(base, point="t48", t="2026-08-03T00:00:00+00:00")]
+    assert [r["point"] for r in B.dedupe(rows)] == ["t48"]
 
 
 # ─────────────────────────── деньги и издержки ──────────────────────
@@ -144,7 +153,7 @@ def test_data_lives_outside_repo(monkeypatch):
 
 def test_report_has_segments_and_roi():
     rows = [{"pre_cutoff": False, "segment": "tail", "point": "t50", "mode": "none", "p_bot": 0.8, "p_mkt": 0.5,
-             "outcome": 1, "fee_rate": 0.04}] * 3
+             "outcome": 1, "fee_rate": 0.04, "market": f"m{i}", "t": "2026-08-03T00:00:00+00:00"} for i in range(3)]
     out = B.report(rows)
     assert "| после | tail | t50 | none | 3 |" in out and "ROI после издержек" in out
 

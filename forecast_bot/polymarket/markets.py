@@ -11,6 +11,8 @@ from forecast_bot.polymarket.http import get_json
 GAMMA = "https://gamma-api.polymarket.com/markets"
 CLOB_HISTORY = "https://clob.polymarket.com/prices-history"
 MAX_LIFE_DAYS = 30
+MIN_LIFE_DAYS = 3   # короче — нет обеих точек (t48 нужен рынок > 60 ч); спорт «на матч» живёт ~1 ч
+PAGE = 100          # Gamma отдаёт не больше 100 строк на запрос (живьём 05.10.2026, limit=500 → 100)
 
 # Ставки taker fee по категории (docs.polymarket.com/polymarket-learn/trading/fees, 04.10.2026):
 # fee = C × feeRate × p × (1 − p). Категорию даёт поле Gamma `feeType` вида «politics_fees».
@@ -96,7 +98,8 @@ def from_gamma(m: dict) -> Optional[Market]:
     start, closed = parse_ts(m.get("startDate")), parse_ts(m.get("closedTime"))
     if not start or not closed or closed <= start:
         return None
-    if (closed - start).total_seconds() / 86400 > MAX_LIFE_DAYS:
+    life = (closed - start).total_seconds() / 86400
+    if life > MAX_LIFE_DAYS or life < MIN_LIFE_DAYS:
         return None
     return Market(id=str(m.get("id")), question=m.get("question") or "", slug=m.get("slug") or "",
                   description=(m.get("description") or "")[:4000], start=start, closed=closed,
@@ -105,15 +108,33 @@ def from_gamma(m: dict) -> Optional[Market]:
                   yes_token=str(tokens[0]), outcome=1 if prices == ["1", "0"] else 0)
 
 
-def iter_closed(end_min: str, end_max: str, page: int = 500, max_pages: int = 40) -> Iterator[dict]:
-    for k in range(max_pages):
-        rows = get_json(GAMMA, {"closed": "true", "limit": page, "offset": k * page, "order": "endDate",
-                                "ascending": "false", "end_date_min": end_min, "end_date_max": end_max})
-        if not rows:
-            return
-        yield from rows
-        if len(rows) < page:
-            return
+MAX_OFFSET = 2000  # Gamma: offset > 2000 → 422 Unprocessable Entity (живьём 05.10.2026)
+
+
+def iter_closed(end_min: str, end_max: str, page: int = PAGE, window_days: int = 3) -> Iterator[dict]:
+    """Закрытые рынки окнами по endDate (от свежих к старым): внутри окна — страницы до MAX_OFFSET."""
+    from datetime import timedelta
+
+    lo, hi = parse_ts(end_min), parse_ts(end_max)
+    w_hi = hi
+    while w_hi > lo:
+        w_lo = max(lo, w_hi - timedelta(days=window_days))
+        for offset in range(0, MAX_OFFSET + 1, page):
+            try:
+                rows = get_json(GAMMA, {"closed": "true", "limit": page, "offset": offset, "order": "endDate",
+                                        "ascending": "false", "end_date_min": w_lo.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                        "end_date_max": w_hi.strftime("%Y-%m-%dT%H:%M:%SZ")})
+            except RuntimeError as exc:
+                # 422 — глубже окна Gamma не пускает; 5xx после повторов — разовый сбой. В обоих случаях
+                # переходим к следующему окну, а не роняем ночной обход.
+                print(f"окно {w_lo:%Y-%m-%d}…{w_hi:%Y-%m-%d}, offset {offset}: {str(exc)[:80]}", flush=True)
+                break
+            if not rows:
+                break
+            yield from rows
+            if len(rows) < page:
+                break
+        w_hi = w_lo
 
 
 def load_history(m: Market, fidelity_min: int = 60) -> list[tuple[int, float]]:

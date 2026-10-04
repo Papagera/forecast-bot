@@ -18,6 +18,7 @@ from forecast_bot import paths
 APP = "polymarket"
 STAGE_START = datetime(2026, 10, 5, tzinfo=timezone.utc)
 STAGE_CAP_USD = 20.0
+BACKTEST_DAY_USD = 8.0  # суточный потолок приложения на время бэктеста A (income 05.10.2026); для B — $2 из ai_guard
 CUTOFF = datetime(2026, 7, 1, tzinfo=timezone.utc)  # Opus 5.5: knowledge cutoff — июнь 2026 (platform.claude.com)
 TAIL_MAX_VOLUME = 10_000.0     # граница хвоста — по объёму; уточняется по распределению выборки (решение income)
 LIQUID_MIN_VOLUME = 250_000.0
@@ -47,6 +48,8 @@ def points(start: datetime, closed: datetime) -> dict[str, datetime]:
     t48 = closed - timedelta(hours=48)
     if t48 > start + timedelta(hours=12):
         out["t48"] = t48
+        if "t50" in out and abs(out["t50"] - t48) < timedelta(hours=12):
+            del out["t50"]  # у рынков 3–4 дня обе точки — за двое суток до закрытия; дубль прогноза не нужен
     return out
 
 
@@ -102,11 +105,23 @@ def load_results(path: Path) -> list[dict]:
     return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
 
 
+def dedupe(rows: list[dict]) -> list[dict]:
+    """Убрать t50, если у того же рынка и режима есть t48 в пределах 12 ч (строки до правки points())."""
+    t48 = {(r["market"], r["mode"]): datetime.fromisoformat(r["t"]) for r in rows if r["point"] == "t48"}
+    out = []
+    for r in rows:
+        k = (r["market"], r["mode"])
+        if r["point"] == "t50" and k in t48 and abs(datetime.fromisoformat(r["t"]) - t48[k]) < timedelta(hours=12):
+            continue
+        out.append(r)
+    return out
+
+
 def report(rows: Iterable[dict]) -> str:
     """Таблица «сегмент × точка × режим»: Brier/log бот vs рынок vs смесь; бумажная прибыль по порогам."""
     from collections import defaultdict
 
-    rows = list(rows)
+    rows = dedupe(list(rows))
     groups = defaultdict(list)
     for r in rows:
         groups[(r["pre_cutoff"], r["segment"], r["point"], r["mode"])].append(r)

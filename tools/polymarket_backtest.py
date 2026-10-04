@@ -1,6 +1,6 @@
 """Бэктест A Polymarket (ТЗ этапа 3). Только чтение публичных данных; ничего не торгует.
 
-    .venv/bin/python tools/polymarket_backtest.py select [--end-min 2026-04-01] [--end-max 2026-10-01] [--per-segment 150]
+    .venv/bin/python tools/polymarket_backtest.py select [--end-min 2026-07-03] [--end-max 2026-10-01] [--tail 110 --liquid 45 --mid 0]
     .venv/bin/python tools/polymarket_backtest.py forecast --mode none|gdelt [--points t50,t48] [--limit 20]
     .venv/bin/python tools/polymarket_backtest.py report
 
@@ -30,15 +30,38 @@ def cmd_select(a) -> int:
     out = B.data_dir()
     out.mkdir(parents=True, exist_ok=True)
     keep: dict[str, list[M.Market]] = {"tail": [], "mid": [], "liquid": []}
+    quota = {"tail": a.tail, "mid": a.mid, "liquid": a.liquid}
+    existing = out / "markets.jsonl"
+    if existing.exists():  # возобновление: уже отобранные рынки (с историей) не качаем заново
+        for line in existing.read_text().splitlines():
+            if line.strip():
+                m = M.Market.from_json(line)
+                keep[B.segment(m.volume)].append(m)
+        print("подхвачено из файла: " + ", ".join(f"{k} {len(v)}" for k, v in keep.items()), flush=True)
+    seen = 0
+    try:
+        _select_loop(a, keep, quota, out)
+    finally:
+        path = out / "markets.jsonl"
+        path.write_text("\n".join(m.to_json() for v in keep.values() for m in v) + "\n")
+        print("отобрано: " + ", ".join(f"{k} {len(v)}" for k, v in keep.items()) + f" → {path}")
+    vols = sorted(m.volume for v in keep.values() for m in v)
+    if vols:
+        q = lambda p: vols[int(p * (len(vols) - 1))]  # noqa: E731
+        print(f"объём: p10 {q(.1):,.0f}  p50 {q(.5):,.0f}  p90 {q(.9):,.0f}")
+    return 0
+
+
+def _select_loop(a, keep, quota, out) -> None:
     seen = 0
     for raw in M.iter_closed(a.end_min, a.end_max):
         seen += 1
         m = M.from_gamma(raw)
-        if m is None:
+        if m is None or any(m.id == x.id for v in keep.values() for x in v):
             continue
         seg = B.segment(m.volume)
-        if len(keep[seg]) >= (a.per_segment if seg != "mid" else a.per_segment // 3):
-            if all(len(v) >= (a.per_segment if k != "mid" else a.per_segment // 3) for k, v in keep.items()):
+        if len(keep[seg]) >= quota[seg]:
+            if all(len(keep[k]) >= quota[k] for k in keep):
                 break
             continue
         try:
@@ -49,14 +72,8 @@ def cmd_select(a) -> int:
         if len(m.history) < 3:
             continue
         keep[seg].append(m)
-    path = out / "markets.jsonl"
-    path.write_text("\n".join(m.to_json() for v in keep.values() for m in v) + "\n")
-    print(f"просмотрено {seen}, отобрано: " + ", ".join(f"{k} {len(v)}" for k, v in keep.items()) + f" → {path}")
-    vols = sorted(m.volume for v in keep.values() for m in v)
-    if vols:
-        q = lambda p: vols[int(p * (len(vols) - 1))]  # noqa: E731
-        print(f"объём: p10 {q(.1):,.0f}  p50 {q(.5):,.0f}  p90 {q(.9):,.0f}")
-    return 0
+        if seen % 500 == 0:
+            print(f"просмотрено {seen}: " + ", ".join(f"{k} {len(v)}" for k, v in keep.items()), flush=True)
 
 
 async def _forecast(a) -> int:
@@ -136,9 +153,11 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("select")
-    s.add_argument("--end-min", default="2026-04-01T00:00:00Z")
+    s.add_argument("--end-min", default="2026-07-03T00:00:00Z")  # после cutoff Opus 5.5 (июнь 2026)
     s.add_argument("--end-max", default="2026-10-01T00:00:00Z")
-    s.add_argument("--per-segment", type=int, default=150)
+    s.add_argument("--tail", type=int, default=110)
+    s.add_argument("--liquid", type=int, default=45)
+    s.add_argument("--mid", type=int, default=0)
     f = sub.add_parser("forecast")
     f.add_argument("--mode", choices=["none", "gdelt"], required=True)
     f.add_argument("--points", default="t50,t48")
@@ -149,9 +168,11 @@ def main() -> int:
     if a.cmd == "select":
         return cmd_select(a)
     if a.cmd == "forecast":
-        from forecast_bot import guarded_llm
+        from forecast_bot import ai_guard, guarded_llm
 
-        guarded_llm.start_run(min(2.0, B.stage_budget_left()))
+        # Только на бэктест (income 05.10.2026): суточный потолок приложения $8 вместо $2; потолок этапа — $20 по-прежнему.
+        ai_guard.APP_LIMITS[B.APP] = {"day_usd": B.BACKTEST_DAY_USD}
+        guarded_llm.start_run(max(0.0, B.stage_budget_left()))
         return asyncio.run(_forecast(a))
     return cmd_report(a)
 
