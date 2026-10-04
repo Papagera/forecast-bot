@@ -138,6 +138,19 @@ def iter_closed(end_min: str, end_max: str, page: int = PAGE, window_days: int =
         w_hi = w_lo
 
 
+HISTORY_CHUNK_S = 7 * 86400  # длинный диапазон startTs/endTs → 400 (живьём 05.10.2026); окно в неделю проходит
+
+
 def load_history(m: Market, fidelity_min: int = 60) -> list[tuple[int, float]]:
+    """Часовая история цены YES. interval=max у рынков, закрытых до ~июля 2026, отдаёт пусто (живьём 05.10.2026:
+    0 точек против 160–195 по явному диапазону) — тогда добираем окнами startTs/endTs."""
     d = get_json(CLOB_HISTORY, {"market": m.yes_token, "interval": "max", "fidelity": fidelity_min})
-    return sorted((int(x["t"]), float(x["p"])) for x in (d or {}).get("history", []))
+    pts = {int(x["t"]): float(x["p"]) for x in (d or {}).get("history", [])}
+    if len(pts) < 3:
+        lo, hi = int(m.start.timestamp()), int(m.closed.timestamp())
+        while lo < hi:
+            end = min(hi, lo + HISTORY_CHUNK_S)
+            d = get_json(CLOB_HISTORY, {"market": m.yes_token, "startTs": lo, "endTs": end, "fidelity": fidelity_min})
+            pts.update({int(x["t"]): float(x["p"]) for x in (d or {}).get("history", [])})
+            lo = end
+    return sorted(pts.items())
