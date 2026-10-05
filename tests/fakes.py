@@ -88,10 +88,13 @@ class FakeLlm:
         self.tool_plan = ["search_news", "fred_series"]  # что «агент» вызовет по шагам
         self.hallucinate = False  # добавить в справку выдуманное число
         self.web_searches = 0
+        self.raise_exc: Exception | None = None  # отказ провайдера (например, 402 OpenRouter)
 
     async def __call__(self, *args: Any, messages: list | None = None, model: str = "", **kwargs: Any) -> ModelResponse:
         text = str(messages[-1]["content"]) if messages else ""
         self.calls.append(model)
+        if self.raise_exc is not None:
+            raise self.raise_exc
         self.prompts.append(text)
         self.kwargs.append(kwargs)
         if kwargs.get("tools"):
