@@ -15,7 +15,7 @@ import asyncio
 import contextvars
 import os
 from collections import Counter
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from forecasting_tools import GeneralLlm
 from forecasting_tools.ai_models import general_llm as _gl
@@ -172,13 +172,31 @@ class GuardedLlm(GeneralLlm):
         return result
 
 
+SEARCH_ROW_MODEL = "openrouter/web-search"  # строка леджера для платного поиска (отдельно от токенов модели)
+
+
+def split_search_cost(usage: dict, billed: Optional[float], price_per_search: float) -> tuple[Optional[float], float, int]:
+    """(стоимость модели, стоимость поиска, число поисков) из usage OpenRouter.
+    Живьём 05.10.2026: usage.cost 0.010201 = cost_details.upstream_inference_cost 0.003201 + Exa 0.007 —
+    счёт OpenRouter уже включает поиск. Есть оба поля → делим по факту; нет → поисков × прайс."""
+    n = int(((usage.get("server_tool_use") or {}).get("web_search_requests")) or 1)
+    total = usage.get("cost") if usage.get("cost") is not None else billed
+    upstream = (usage.get("cost_details") or {}).get("upstream_inference_cost")
+    if total is not None and upstream is not None and total >= upstream:
+        return float(upstream), float(total) - float(upstream), n
+    search = n * price_per_search
+    return (float(total) - search if total is not None and total > search else None), search, n
+
+
 async def guarded_completion(model: str, messages: list[dict], *, max_tokens: int,
-                             tries: int = 2, **kwargs: Any) -> Any:
-    """Сырой вызов модели (агент: tools/tool_calls) — тот же путь, что у GuardedLlm:
+                             tries: int = 2, search_price: Optional[float] = None, **kwargs: Any) -> Any:
+    """Сырой вызов модели (агент: tools/tool_calls; веб-поиск) — тот же путь, что у GuardedLlm:
     лимит запуска → ai_guard.acall (pre-check, учёт факта) → сторож `acompletion`.
-    Возвращает litellm ModelResponse целиком (нужны tool_calls)."""
+    `search_price` — вызов с веб-поиском OpenRouter: поиск пишется в леджер ОТДЕЛЬНОЙ строкой (SEARCH_ROW_MODEL).
+    Возвращает litellm ModelResponse целиком (нужны tool_calls / annotations)."""
     user = CURRENT_USER.get()
     provider = provider_for(model)
+    search_cost: list[float] = []
 
     async def fn():
         sink: list = []
@@ -191,9 +209,14 @@ async def guarded_completion(model: str, messages: list[dict], *, max_tokens: in
             _IN_GUARD.reset(token)
         billed = [c for c in sink if c is not None]
         u = getattr(resp, "usage", None)
+        actual = sum(billed) if billed else None
+        if search_price is not None:
+            udict = u.model_dump() if hasattr(u, "model_dump") else dict(u or {})
+            actual, cost_s, _n = split_search_cost(udict, actual, search_price)
+            search_cost.append(cost_s)
         usage = TokenUsage(input=int(getattr(u, "prompt_tokens", 0) or 0),
                            output=int(getattr(u, "completion_tokens", 0) or 0),
-                           actual_cost_usd=sum(billed) if billed else None)
+                           actual_cost_usd=actual)
         return resp, usage
 
     attempt = rate_waits = 0
@@ -203,6 +226,12 @@ async def guarded_completion(model: str, messages: list[dict], *, max_tokens: in
             result = await ai_guard.acall(provider, model, fn, user=user, app=APP, max_tokens=max_tokens,
                                           price=ai_guard.PRICES.get((provider, price_key(model))))
             GUARDED_CALLS[user] += 1
+            if search_cost:
+                async def search_row():
+                    return None, TokenUsage(actual_cost_usd=search_cost[0])
+
+                await ai_guard.acall(provider, SEARCH_ROW_MODEL, search_row, user=user, app=APP, price=(0.0, 0.0))
+                GUARDED_CALLS[user] += 1  # строка леджера = учтённый вызов (сверка в run.py)
             return result
         except BudgetExceeded as exc:
             if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:

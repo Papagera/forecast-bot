@@ -38,6 +38,9 @@ VARIANTS = {
     "H": {"FORECAST_RESEARCH": "agent", "FORECAST_AGENT_MODEL": HAIKU, "FORECAST_MODEL": OPUS, "FORECAST_REASONING": "high"},
     "S": {"FORECAST_RESEARCH": "agent", "FORECAST_AGENT_MODEL": SONNET, "FORECAST_MODEL": OPUS, "FORECAST_REASONING": "high"},
     "G": {"FORECAST_RESEARCH": "agent", "FORECAST_AGENT_MODEL": FLASH38, "FORECAST_MODEL": OPUS, "FORECAST_REASONING": "high"},
+    # 05.10.2026: AskNews заменён веб-поиском OpenRouter + Exa (в замерах AskNews запрещён гардом).
+    "W": {"FORECAST_RESEARCH": "agent", "FORECAST_SEARCH": "web", "FORECAST_AGENT_MODEL": FLASH38,
+          "FORECAST_MODEL": OPUS, "FORECAST_REASONING": "high"},
 }
 SOURCES = ("bot-testing-area", 33108)  # песочница + Metaculus Cup Fall 2026 (открытые вопросы)
 QUOTA = {"BinaryQuestion": 7, "NumericQuestion": 4, "DiscreteQuestion": 1, "MultipleChoiceQuestion": 4}

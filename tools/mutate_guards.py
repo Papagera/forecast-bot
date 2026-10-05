@@ -175,6 +175,23 @@ SOURCE_MUTATIONS = {
         "forecast_bot.bot", "        except (BudgetExceeded, UnguardedLlmCall):\n            raise",
         "        except ZeroDivisionError:\n            raise",
         "tests/test_agent.py::test_guard_refusal_in_research_is_not_swallowed"),
+    "поиск: нет отдельной строки в леджере": (
+        "forecast_bot.guarded_llm", "            if search_cost:\n", "            if False:\n",
+        "tests/test_websearch.py::test_search_writes_two_ledger_rows_and_returns_sources"),
+    "поиск: цена по прайсу вместо факта": (
+        "forecast_bot.guarded_llm", "if total is not None and upstream is not None and total >= upstream:", "if False:",
+        "tests/test_websearch.py::test_split_search_cost_prefers_fact_over_price"),
+    "поиск: строка леджера не учтена сторожем": (
+        "forecast_bot.guarded_llm", "                GUARDED_CALLS[user] += 1  # строка леджера = учтённый вызов",
+        "                pass  # строка леджера = учтённый вызов",
+        "tests/test_websearch.py::test_agent_with_web_search_end_to_end"),
+    "AskNews разрешён в замерах": (
+        "forecast_bot.bot", '        if guarded_llm.APP != "forecast":', "        if False:",
+        "tests/test_websearch.py::test_asknews_forbidden_outside_battle"),
+    "по умолчанию снова AskNews": (
+        "forecast_bot.bot", 'return os.environ.get("FORECAST_SEARCH", "web").strip() or "web"',
+        'return os.environ.get("FORECAST_SEARCH", "asknews").strip() or "asknews"',
+        "tests/test_websearch.py::test_web_is_default_search_and_asknews_needs_flag"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

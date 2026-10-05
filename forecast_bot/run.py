@@ -133,7 +133,9 @@ def load_env_file(path) -> None:
 def missing_keys(env: Optional[dict] = None) -> list[str]:
     env = os.environ if env is None else env
     missing = [k for k in ("METACULUS_TOKEN", "OPENROUTER_API_KEY") if not env.get(k)]
-    needs_asknews = env.get("FORECAST_RESEARCH", "asknews") in ("asknews", "asknews-latest", "agent")
+    research = env.get("FORECAST_RESEARCH", "asknews")
+    needs_asknews = research in ("asknews", "asknews-latest") or (
+        research == "agent" and env.get("FORECAST_SEARCH", "web") == "asknews")
     if needs_asknews and not (env.get("ASKNEWS_API_KEY") or (env.get("ASKNEWS_CLIENT_ID") and env.get("ASKNEWS_SECRET"))):
         missing.append("ASKNEWS_API_KEY")
     return missing
@@ -259,6 +261,7 @@ async def run(
             guarded_calls = guarded_llm.GUARDED_CALLS.pop(user, 0)
             base.update(cost_usd=cost, llm_calls=ledger_calls,
                         asknews_calls=bot.asknews_calls.pop(qid, 0),
+                        web_searches=getattr(bot, "web_searches", {}).pop(qid, 0),
                         **getattr(bot, "research_stats", {}).pop(qid, {}))
             if variant:
                 base["variant"] = variant
@@ -415,6 +418,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--model", default=None, help="основная модель (перекрывает FORECAST_MODEL)")
     ap.add_argument("--predictions", type=int, default=None, help="прогнозов на вопрос (перекрывает FORECAST_PREDICTIONS)")
+    ap.add_argument("--search", choices=["web", "asknews", "none"], default=None,
+                    help="поиск агента: web (OpenRouter + Exa, по умолчанию) / asknews (выключен) / none")
     ap.add_argument("--agent-model", default=None, help="модель агента-исследователя (перекрывает FORECAST_AGENT_MODEL)")
     ap.add_argument("--agent-max-news", type=int, default=None, help="поисков AskNews агенту на вопрос (по умолчанию 3)")
     ap.add_argument("--reasoning", choices=["low", "medium", "high"], default=None,
@@ -434,6 +439,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         os.environ["FORECAST_QUANT_HINTS"] = "1"
     if args.reasoning:
         os.environ["FORECAST_REASONING"] = args.reasoning
+    if args.search:
+        os.environ["FORECAST_SEARCH"] = args.search
     if args.agent_model:
         os.environ["FORECAST_AGENT_MODEL"] = args.agent_model
     if args.agent_max_news is not None:
