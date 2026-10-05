@@ -44,7 +44,12 @@ def test_http_allows_only_get_to_whitelist():
     for url in ("https://example.com/x", "http://gamma-api.polymarket.com/markets", "https://clob.polymarket.com.evil.io/"):
         with pytest.raises(http.ForbiddenRequest):
             http.get_json(url)
-    assert http.ALLOWED_HOSTS == {"gamma-api.polymarket.com", "clob.polymarket.com", "api.gdeltproject.org"}
+    assert http.ALLOWED_HOSTS == {"gamma-api.polymarket.com", "clob.polymarket.com", "api.gdeltproject.org",
+                                  "data.gdeltproject.org"}
+    with pytest.raises(http.ForbiddenRequest):
+        http.get_bytes("https://data.gdeltproject.org.evil.io/x.zip")
+    with pytest.raises(http.ForbiddenRequest):
+        http.get_bytes("http://data.gdeltproject.org/gdeltv2/x.zip")
 
 
 def test_no_asknews_in_polymarket():
@@ -247,3 +252,54 @@ def test_history_falls_back_to_ranges_when_max_is_empty(monkeypatch):
     h = M.load_history(m)
     assert len(calls) > 2 and all(c["endTs"] - c["startTs"] <= M.HISTORY_CHUNK_S for c in calls[1:])
     assert len(h) >= 3 and h == sorted(h)
+
+
+def _gkg_zip(rows):
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        lines = []
+        for ts, title in rows:
+            c = [""] * 27
+            c[1], c[3], c[4] = ts, "news.example", f"https://news.example/{ts}"
+            c[26] = f"<PAGE_TITLE>{title}</PAGE_TITLE>"
+            lines.append("\t".join(c))
+        z.writestr("x.gkg.csv", "\n".join(lines))
+    return buf.getvalue()
+
+
+def test_gdelt_files_never_after_t():
+    from forecast_bot.polymarket import gdelt_files as GF
+    t = datetime(2026, 8, 15, 12, 17, tzinfo=UTC)
+    ts = GF.file_times(t, days=3, per_hour=2)
+    assert ts and max(ts) <= t - GF.SAFETY and min(ts) >= t - timedelta(days=3)
+    assert all(x.minute in (0, 30) for x in ts) and len(ts) == len(set(ts))
+    assert max(ts) == datetime(2026, 8, 15, 11, 0, tzinfo=UTC)
+
+
+def test_gdelt_files_rows_after_t_dropped_and_titles_matched():
+    from forecast_bot.polymarket import gdelt_files as GF
+    t = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
+    raw = _gkg_zip([("20260815110000", "Federal Reserve holds rates as inflation cools"),
+                    ("20260815120000", "Federal Reserve cuts rates in surprise move"),       # ровно t — утечка
+                    ("20260815111500", "Taylor Swift tour news"),                           # не по теме
+                    ("20260815104500", "Fed &amp; Reserve: inflation outlook")])
+    arts = list(GF.parse_gkg(raw))
+    assert len(arts) == 4 and arts[3].title == "Fed & Reserve: inflation outlook"
+    c = GF.Collector()
+    words = GF.words_for("Will the Federal Reserve cut interest rates in August?")
+    for a in arts:
+        c.add("k", a, t, words)
+    titles = [a.title for a in c.articles("k")]
+    assert "Federal Reserve cuts rates in surprise move" not in titles
+    assert titles == ["Federal Reserve holds rates as inflation cools"]
+
+
+def test_gdelt_files_plan_shares_files_between_points():
+    from forecast_bot.polymarket import gdelt_files as GF
+    t = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
+    p = GF.plan([("a|t48", "Will the Fed cut rates?", t), ("b|t48", "Will Bitcoin hit 100k?", t + timedelta(hours=1))],
+                days=1, per_hour=1)
+    assert all(ts < t for ts in p if any(k == "a|t48" for k, _, _ in p[ts]))
+    assert sum(1 for v in p.values() if len(v) == 2) >= 20   # один файл качается на обе точки

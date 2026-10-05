@@ -210,6 +210,15 @@ SOURCE_MUTATIONS = {
         "tools.polymarket_backtest", "                if key not in cache:\n                    stats[\"нет GDELT в кэше\"] += 1\n                    continue\n                research = gdelt.as_research(cache[key])",
         "                research = gdelt.as_research(cache.get(key, []))",
         "tests/test_polymarket.py::test_gdelt_mode_forecasts_only_from_cache"),
+    "polymarket: выгрузки GDELT — строка после t проходит": (
+        "forecast_bot.polymarket.gdelt_files", "if art.seen >= t:", "if False:",
+        "tests/test_polymarket.py::test_gdelt_files_rows_after_t_dropped_and_titles_matched"),
+    "polymarket: выгрузки GDELT — файл без запаса до t": (
+        "forecast_bot.polymarket.gdelt_files", "SAFETY = timedelta(hours=1)", "SAFETY = timedelta(hours=-1)",
+        "tests/test_polymarket.py::test_gdelt_files_never_after_t"),
+    "polymarket: data.gdeltproject.org — не https": (
+        "forecast_bot.polymarket.http", 'if urlparse(url).scheme != "https" or host not in ALLOWED_HOSTS:',
+        "if host not in ALLOWED_HOSTS:", "tests/test_polymarket.py::test_http_allows_only_get_to_whitelist"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

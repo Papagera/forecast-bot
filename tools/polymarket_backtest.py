@@ -208,6 +208,74 @@ def cmd_gdelt_fetch(a) -> int:
     return 0
 
 
+def cmd_gdelt_files(a) -> int:
+    """Заголовки из выгрузок GDELT GKG (data.gdeltproject.org): окно `days` до t, `per_hour` файлов в час.
+    Возобновляемо: по каждому файлу в gdelt_files_log.jsonl пишутся совпадения (или пустая отметка)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from forecast_bot.polymarket import gdelt_files as GF
+
+    pts, segs = a.points.split(","), set(a.segments.split(","))
+    points = [(gdelt_key(m.id, p), m.question, t) for m in load_markets(a.files) if B.segment(m.volume) in segs
+              for p, t in B.points(m.start, m.closed).items() if p in pts]
+    by_file = GF.plan(points, a.days, a.per_hour)
+    log_path = B.data_dir() / "gdelt_files_log.jsonl"
+    done = set()
+    if log_path.exists():
+        done = {json.loads(l)["file"] for l in log_path.read_text().splitlines() if l.strip()}
+    todo = sorted(ts for ts in by_file if ts.strftime("%Y%m%d%H%M%S") not in done)
+    print(f"точек {len(points)}, файлов {len(by_file)}, уже {len(done)}, качать {len(todo)}", flush=True)
+
+    def work(ts):
+        raw = GF.fetch(ts)
+        hits = []
+        if raw:
+            c = GF.Collector(keep=1000)
+            for art in GF.parse_gkg(raw):
+                for key, t, words in by_file[ts]:
+                    c.add(key, art, t, words)
+            hits = [{"key": k, "seen": x.seen.isoformat(), "title": x.title, "url": x.url, "domain": x.domain}
+                    for k in c.items for x in c.articles(k)]
+        return ts, raw is not None, hits
+
+    errors = 0
+    with ThreadPoolExecutor(max_workers=a.workers) as pool, log_path.open("a") as log:
+        for i, fut in enumerate([pool.submit(work, ts) for ts in todo], 1):
+            try:
+                ts, ok, hits = fut.result()
+            except Exception as exc:  # сетевой сбой по одному файлу — пропуск, при повторном запуске докачается
+                errors += 1
+                print(f"ошибка файла: {str(exc)[:100]}", flush=True)
+                continue
+            log.write(json.dumps({"file": ts.strftime("%Y%m%d%H%M%S"), "ok": ok, "hits": hits}, ensure_ascii=False) + "\n")
+            log.flush()
+            if i % 100 == 0:
+                print(f"{i}/{len(todo)}", flush=True)
+    # сборка кэша для режима gdelt: top-N на точку
+    c = GF.Collector(keep=a.keep)
+    t_of = {k: t for k, _, t in points}
+    words_of = {k: GF.words_for(q) for k, q, _ in points}
+    for line in log_path.read_text().splitlines():
+        if not line.strip():
+            continue
+        for h in json.loads(line)["hits"]:
+            if h["key"] in t_of:
+                c.add(h["key"], gdelt.Article(datetime.fromisoformat(h["seen"]), h["title"], h["url"], h["domain"], ""),
+                      t_of[h["key"]], words_of[h["key"]])
+    out = B.data_dir() / "gdelt.jsonl"
+    if out.exists() and not (B.data_dir() / "gdelt_api.jsonl").exists():
+        out.rename(B.data_dir() / "gdelt_api.jsonl")  # 2 точки из API DOC — отдельно, чтобы не смешивать источники
+    with out.open("w") as fh:
+        for k, _, t in points:
+            arts = c.articles(k)
+            fh.write(json.dumps({"key": k, "t": t.isoformat(), "source": "gkg-files", "articles": [
+                {"seen": x.seen.isoformat(), "title": x.title, "url": x.url, "domain": x.domain, "language": ""}
+                for x in arts]}, ensure_ascii=False) + "\n")
+    with_news = sum(1 for k, _, _ in points if c.articles(k))
+    print(f"кэш: {len(points)} точек, с новостями {with_news}, ошибок файлов {errors} → {out}")
+    return 0
+
+
 def cmd_report(_a) -> int:
     rows = B.load_results(B.data_dir() / "backtest.jsonl")
     closed = {m.id: m.closed.isoformat() for m in load_markets("markets.jsonl,markets_pre.jsonl")}
@@ -241,6 +309,14 @@ def main() -> int:
     g.add_argument("--pace", type=float, default=15.0)
     g.add_argument("--cooldown", type=int, default=5400)
     g.add_argument("--max-fails", type=int, default=3)
+    gf = sub.add_parser("gdelt-files")
+    gf.add_argument("--points", default="t48")
+    gf.add_argument("--segments", default="tail,liquid")
+    gf.add_argument("--files", default="markets.jsonl,markets_pre.jsonl")
+    gf.add_argument("--days", type=int, default=3)
+    gf.add_argument("--per-hour", type=int, default=2)
+    gf.add_argument("--workers", type=int, default=4)
+    gf.add_argument("--keep", type=int, default=15)
     f = sub.add_parser("forecast")
     f.add_argument("--mode", choices=["none", "gdelt"], required=True)
     f.add_argument("--points", default="t50,t48")
@@ -253,6 +329,8 @@ def main() -> int:
         return cmd_select(a)
     if a.cmd == "gdelt-fetch":
         return cmd_gdelt_fetch(a)
+    if a.cmd == "gdelt-files":
+        return cmd_gdelt_files(a)
     if a.cmd == "forecast":
         from forecast_bot import ai_guard, guarded_llm
 
