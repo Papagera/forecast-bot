@@ -178,20 +178,25 @@ def cmd_gdelt_fetch(a) -> int:
     http.MIN_INTERVAL_S[urlparse(gdelt.URL).hostname] = a.pace
     fails = 0
     for i, (m, p, t) in enumerate(todo, 1):
-        try:
-            arts = gdelt.search(m.question, t, retries=1)
-        except RuntimeError as exc:
-            if "rate limited" not in str(exc):
-                print(f"{i}/{len(todo)} {m.id} {p}: {str(exc)[:90]} — пропуск (не темп)", flush=True)
-                continue
-            fails += 1
-            print(f"{i}/{len(todo)} {m.id} {p}: {str(exc)[:90]} — пауза {a.cooldown} с (подряд {fails})", flush=True)
-            if fails >= a.max_fails:
-                print("GDELT не отвечает — стоп, кэш сохранён")
-                return 0
-            time.sleep(a.cooldown)
+        arts = None
+        while arts is None:
+            try:
+                arts = gdelt.search(m.question, t, retries=1)
+            except RuntimeError as exc:
+                if "rate limited" not in str(exc):
+                    print(f"{i}/{len(todo)} {m.id} {p}: {str(exc)[:90]} — пропуск (не темп)", flush=True)
+                    break
+                # отказов по темпу за запуск — не больше max_fails (income 05.10: «не долби, до 3 попыток за день»);
+                # после паузы повторяем ту же точку, а не теряем её
+                fails += 1
+                print(f"{i}/{len(todo)} {m.id} {p}: 429 — отказ {fails}/{a.max_fails}", flush=True)
+                if fails >= a.max_fails:
+                    print("GDELT не отвечает — стоп, кэш сохранён")
+                    return 0
+                print(f"пауза {a.cooldown} с", flush=True)
+                time.sleep(a.cooldown)
+        if arts is None:
             continue
-        fails = 0
         rec = {"key": gdelt_key(m.id, p), "t": t.isoformat(),
                "articles": [{"seen": x.seen.isoformat(), "title": x.title, "url": x.url, "domain": x.domain,
                              "language": x.language} for x in arts]}
@@ -234,8 +239,8 @@ def main() -> int:
     g.add_argument("--segments", default="tail,liquid,mid")
     g.add_argument("--files", default="markets.jsonl,markets_pre.jsonl")
     g.add_argument("--pace", type=float, default=15.0)
-    g.add_argument("--cooldown", type=int, default=900)
-    g.add_argument("--max-fails", type=int, default=12)
+    g.add_argument("--cooldown", type=int, default=5400)
+    g.add_argument("--max-fails", type=int, default=3)
     f = sub.add_parser("forecast")
     f.add_argument("--mode", choices=["none", "gdelt"], required=True)
     f.add_argument("--points", default="t50,t48")
