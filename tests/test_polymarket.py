@@ -45,7 +45,8 @@ def test_http_allows_only_get_to_whitelist():
         with pytest.raises(http.ForbiddenRequest):
             http.get_json(url)
     assert http.ALLOWED_HOSTS == {"gamma-api.polymarket.com", "clob.polymarket.com", "api.gdeltproject.org",
-                                  "data.gdeltproject.org"}
+                                  "data.gdeltproject.org", "api.binance.com", "query1.finance.yahoo.com",
+                                  "home.treasury.gov", "alfred.stlouisfed.org"}
     with pytest.raises(http.ForbiddenRequest):
         http.get_bytes("https://data.gdeltproject.org.evil.io/x.zip")
     with pytest.raises(http.ForbiddenRequest):

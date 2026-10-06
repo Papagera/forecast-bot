@@ -245,6 +245,49 @@ SOURCE_MUTATIONS = {
     "402: итог запуска без красной строки": (
         "forecast_bot.summary", 'credit = sum(1 for r in errors if is_credit_error(r["error"] or ""))', "credit = 0",
         "tests/test_credits.py::test_summary_flags_credit_errors"),
+    "pm2: бары из будущего видны модели": (
+        "forecast_bot.polymarket.series_data", 'n = int(np.searchsorted(self.avail, t, side="right"))',
+        "n = len(self.avail)", "tests/test_polymarket_series.py::test_price_dist_ignores_future_bars"),
+    "pm2: точки от closedTime, а не плановой endDate": (
+        "forecast_bot.polymarket.series", "out = B.points(m.start, m.end_planned)", "out = B.points(m.start, m.closed)",
+        "tests/test_polymarket_series.py::test_points_from_planned_end_not_close_time"),
+    "pm2: рынок, закрытый до t, остаётся": (
+        "forecast_bot.polymarket.series", "return {p: t for p, t in out.items() if m.closed > t}", "return out",
+        "tests/test_polymarket_series.py::test_points_from_planned_end_not_close_time"),
+    "pm2: порог пройден до t — точка не отсекается": (
+        "forecast_bot.polymarket.series_quant", "return bool(seen.high.max() >= spec.lo)", "return False",
+        "tests/test_polymarket_series.py::test_already_hit_drops_point"),
+    "pm2: макро — опубликованное на t значение не отсекается": (
+        "forecast_bot.polymarket.series_quant", "    if target in have:\n        return None, ",
+        "    if False:\n        return None, ",
+        "tests/test_polymarket_series.py::test_macro_uses_vintage_before_t_and_refuses_published_month"),
+    "pm2: винтаж ALFRED на день t": (
+        "forecast_bot.polymarket.series_quant", "return (t - timedelta(days=1)).date()", "return t.date()",
+        "tests/test_polymarket_series.py::test_vintage_is_day_before_t"),
+    "pm2: потолок этапа считает траты 3A": (
+        "forecast_bot.polymarket.series_backtest", 'ai_guard.app_cost_since(f"{B.APP}:{LEDGER_PREFIX}"',
+        "ai_guard.app_cost_since(B.APP", "tests/test_polymarket_series.py::test_stage2_budget_counts_only_pm2"),
+    "pm2: потолок этапа не проверяется": (
+        "tools.polymarket_series", "        if SB.stage_budget_left() <= 0:", "        if False:",
+        "tests/test_polymarket_series.py::test_llm_stops_at_stage_cap"),
+    "pm2: приложение гарда не проверено": (
+        "tools.polymarket_series", "    if guarded_llm.APP != B.APP:", "    if False:",
+        "tests/test_polymarket_series.py::test_llm_refuses_wrong_app"),
+    "pm2: ответ LLM без JSON → нулевая поправка": (
+        "forecast_bot.polymarket.series_llm", '        raise BadAnswer("в ответе нет JSON")',
+        '        return 0.0, 1.0, ""', "tests/test_polymarket_series.py::test_llm_bad_answer_is_error_not_zero_shift"),
+    "pm2: поправка LLM без рамок": (
+        "forecast_bot.polymarket.series_llm", "    shift = max(-SHIFT_MAX, min(SHIFT_MAX, shift))", "    pass",
+        "tests/test_polymarket_series.py::test_parse_answer_clips_and_rejects"),
+    "pm2: новости после t из кэша проходят": (
+        "tools.polymarket_series", 'for x in r["articles"] if datetime.fromisoformat(x["seen"]) < t]',
+        'for x in r["articles"]]', "tests/test_polymarket_series.py::test_llm_through_guard_without_market_price_and_future_news"),
+    "pm2: бутстрэп по строкам, а не кластерам": (
+        "forecast_bot.polymarket.series_backtest", 'by[r["cluster"]].append(r)', "by[id(r)].append(r)",
+        "tests/test_polymarket_series.py::test_bootstrap_resamples_clusters_not_rows"),
+    "pm2: «микро» торгуется": (
+        "forecast_bot.polymarket.series_backtest", '        if seg == "micro":', "        if False:",
+        "tests/test_polymarket_series.py::test_trades_skip_micro_and_pay_fee"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),
