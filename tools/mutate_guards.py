@@ -380,6 +380,17 @@ SOURCE_MUTATIONS = {
     "pm4: лестница из одной даты / разных вопросов": (
         "forecast_bot.polymarket.biases", '                if s1["date"] >= s2["date"] or s1.get("tmpl") != s2.get("tmpl"):',
         "                if False:", "tests/test_polymarket_biases.py::test_ladder_needs_later_date_and_same_question"),
+    "Г-замер: после 7 дней снимает дальше": (
+        "tools.mm_forward", '    if now > datetime.fromisoformat(st["started"]) + timedelta(days=DAYS):', "    if False:",
+        "tests/test_mm_forward.py::test_snap_writes_aggregates_without_wallets_and_stops_after_7_days"),
+    "Г-замер: любой хост и не https": (
+        "tools.mm_forward", '    if urllib.parse.urlparse(url).scheme != "https" or host not in HOSTS:', "    if False:",
+        "tests/test_mm_forward.py::test_get_refuses_other_hosts_and_http"),
+    "Г-замер: одностороннее участие вне 0.1–0.9 в зачёт": (
+        "tools.mm_forward", "    if 0.10 <= mid <= 0.90:", "    if True:", "tests/test_mm_forward.py::test_score_and_qmin"),
+    "Г-замер: уровни меньше min_size в зачёт": (
+        "tools.mm_forward", "for p, q in levels if q >= min_size)", "for p, q in levels)",
+        "tests/test_mm_forward.py::test_book_q_counts_only_within_spread_and_min_size"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),
