@@ -175,6 +175,50 @@ SOURCE_MUTATIONS = {
         "forecast_bot.bot", "        except (BudgetExceeded, UnguardedLlmCall):\n            raise",
         "        except ZeroDivisionError:\n            raise",
         "tests/test_agent.py::test_guard_refusal_in_research_is_not_swallowed"),
+    "polymarket: цена в момент t (утечка)": (
+        "forecast_bot.polymarket.markets", "prev = [p for t, p in self.history if t < ts]",
+        "prev = [p for t, p in self.history if t <= ts]", "tests/test_polymarket.py::test_price_before_is_strict"),
+    "polymarket: GDELT без отсечки на клиенте": (
+        "forecast_bot.polymarket.gdelt", "return [a for a in arts if a.seen < cutoff]", "return list(arts)",
+        "tests/test_polymarket.py::test_gdelt_cutoff_is_enforced_client_side"),
+    "polymarket: любой хост": (
+        "forecast_bot.polymarket.http", 'if urlparse(url).scheme != "https" or host not in ALLOWED_HOSTS:', "if False:",
+        "tests/test_polymarket.py::test_http_allows_only_get_to_whitelist"),
+    "polymarket: рынки дольше 30 дней": (
+        "forecast_bot.polymarket.markets", "if life > MAX_LIFE_DAYS or life < MIN_LIFE_DAYS:", "if False:",
+        "tests/test_polymarket.py::test_from_gamma_rejects"),
+    "polymarket: сделка без порога": (
+        "forecast_bot.polymarket.backtest", "    if abs(edge) < thr:\n        return None", "    if False:\n        return None",
+        "tests/test_polymarket.py::test_paper_trade_threshold_side_fee_and_pnl"),
+    "polymarket: без комиссии": (
+        "forecast_bot.polymarket.backtest", "fee = fee_rate * c * (1 - c)", "fee = 0.0",
+        "tests/test_polymarket.py::test_paper_trade_threshold_side_fee_and_pnl"),
+    "polymarket: потолок этапа не считается": (
+        "forecast_bot.polymarket.backtest", "return STAGE_CAP_USD - stage_spent()", "return STAGE_CAP_USD",
+        "tests/test_polymarket.py::test_stage_cap_from_ledger"),
+    "polymarket: дубль точки t50 = t48": (
+        "forecast_bot.polymarket.backtest", 'if "t50" in out and abs(out["t50"] - t48) < timedelta(hours=12):', "if False:",
+        "tests/test_polymarket.py::test_points_respect_lifetime"),
+    "polymarket: отчёт считает дубли точек": (
+        "forecast_bot.polymarket.backtest",
+        'if r["point"] == "t50" and k in t48 and abs(datetime.fromisoformat(r["t"]) - t48[k]) < timedelta(hours=12):',
+        "if False:", "tests/test_polymarket.py::test_report_dedupes_coinciding_points"),
+    "polymarket: GDELT конец окна без запаса на утечку сервера": (
+        "forecast_bot.polymarket.gdelt", '"enddatetime": (cutoff - SERVER_LEAK)', '"enddatetime": (cutoff)',
+        "tests/test_polymarket.py::test_gdelt_search_filters_fake_leaky_response"),
+    "polymarket: режим gdelt без кэша идёт без новостей": (
+        "tools.polymarket_backtest", "                if key not in cache:\n                    stats[\"нет GDELT в кэше\"] += 1\n                    continue\n                research = gdelt.as_research(cache[key])",
+        "                research = gdelt.as_research(cache.get(key, []))",
+        "tests/test_polymarket.py::test_gdelt_mode_forecasts_only_from_cache"),
+    "polymarket: выгрузки GDELT — строка после t проходит": (
+        "forecast_bot.polymarket.gdelt_files", "if art.seen >= t:", "if False:",
+        "tests/test_polymarket.py::test_gdelt_files_rows_after_t_dropped_and_titles_matched"),
+    "polymarket: выгрузки GDELT — файл без запаса до t": (
+        "forecast_bot.polymarket.gdelt_files", "SAFETY = timedelta(hours=1)", "SAFETY = timedelta(hours=-1)",
+        "tests/test_polymarket.py::test_gdelt_files_never_after_t"),
+    "polymarket: data.gdeltproject.org — не https": (
+        "forecast_bot.polymarket.http", 'if urlparse(url).scheme != "https" or host not in ALLOWED_HOSTS:',
+        "if host not in ALLOWED_HOSTS:", "tests/test_polymarket.py::test_http_allows_only_get_to_whitelist"),
     "поиск: нет отдельной строки в леджере": (
         "forecast_bot.guarded_llm", "            if search_cost:\n", "            if False:\n",
         "tests/test_websearch.py::test_search_writes_two_ledger_rows_and_returns_sources"),
