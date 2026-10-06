@@ -185,7 +185,7 @@ SOURCE_MUTATIONS = {
         "forecast_bot.polymarket.http", 'if urlparse(url).scheme != "https" or host not in ALLOWED_HOSTS:', "if False:",
         "tests/test_polymarket.py::test_http_allows_only_get_to_whitelist"),
     "polymarket: рынки дольше 30 дней": (
-        "forecast_bot.polymarket.markets", "if life > MAX_LIFE_DAYS or life < MIN_LIFE_DAYS:", "if False:",
+        "forecast_bot.polymarket.markets", "if life > max_life_days or life < MIN_LIFE_DAYS:", "if False:",
         "tests/test_polymarket.py::test_from_gamma_rejects"),
     "polymarket: сделка без порога": (
         "forecast_bot.polymarket.backtest", "    if abs(edge) < thr:\n        return None", "    if False:\n        return None",
@@ -299,6 +299,42 @@ SOURCE_MUTATIONS = {
         "tools.polymarket_series", "                dist, why = dist_for(m, t_info, st, cache)",
         "                dist, why = dist_for(m, t, st, cache)",
         "tests/test_polymarket_series.py::test_quant_sees_series_only_up_to_market_price_time"),
+    "pm3: пост в момент t и позже виден": (
+        "forecast_bot.polymarket.tg_news", "for p in posts if lo <= p.date < t]", "for p in posts if lo <= p.date]",
+        "tests/test_polymarket_ukraine.py::test_select_posts_strictly_before_t_and_window"),
+    "pm3: группа из папки читается": (
+        "forecast_bot.polymarket.tg_news", '        if getattr(ent, "broadcast", False):', "        if True:",
+        "tests/test_polymarket_ukraine.py::test_fetch_reads_only_folder_channels"),
+    "pm3: любая папка": (
+        "forecast_bot.polymarket.tg_news", 'folder = next((f for f in filters if getattr(f, "id", None) == folder_id), None)',
+        "folder = next(iter(filters), None)", "tests/test_polymarket_ukraine.py::test_fetch_reads_only_folder_channels"),
+    "pm3: название канала в выжимке": (
+        "forecast_bot.polymarket.tg_news", "channel {channel_no.get(p.channel, 0)}", "channel {p.channel}",
+        "tests/test_polymarket_ukraine.py::test_as_research_has_channel_numbers_not_names"),
+    "pm3: Telegram до t, а не до цены рынка": (
+        "tools.polymarket_ukraine", "return T.as_research(T.select(posts, t_info, kw[m.event_id]), chans)",
+        "return T.as_research(T.select(posts, t_info + timedelta(hours=2), kw[m.event_id]), chans)",
+        "tests/test_polymarket_ukraine.py::test_forecast_modes_use_only_info_before_market_price"),
+    "pm3: режим без данных идёт «без новостей»": (
+        "tools.polymarket_ukraine", "        if key not in gd:\n            return None", "        if key not in gd:\n            return \"\"",
+        "tests/test_polymarket_ukraine.py::test_forecast_modes_use_only_info_before_market_price"),
+    "pm3: фактическое закрытие в вопросе": (
+        "tools.polymarket_ukraine", "dataclasses.replace(m, closed=m.end_planned)", "m",
+        "tests/test_polymarket_ukraine.py::test_forecast_modes_use_only_info_before_market_price"),
+    "pm3: потолок этапа считает чужие траты": (
+        "tools.polymarket_ukraine", 'ai_guard.app_cost_since(f"{B.APP}:{LEDGER_PREFIX}"', "ai_guard.app_cost_since(B.APP",
+        "tests/test_polymarket_ukraine.py::test_stage3_budget_counts_only_pm3_and_stops"),
+    "pm3: потолок этапа не проверяется": (
+        "tools.polymarket_ukraine", "            if stage_budget_left() <= 0:\n                print(f\"потолок",
+        "            if False:\n                print(f\"потолок", "tests/test_polymarket_ukraine.py::test_stage3_budget_counts_only_pm3_and_stops"),
+    "pm3: срок жизни > 60 дней": (
+        "tools.polymarket_ukraine", "    if life > MAX_LIFE_DAYS or life < M.MIN_LIFE_DAYS:\n        return None",
+        "    if False:\n        return None", "tests/test_polymarket_ukraine.py::test_market_life_up_to_60_days_and_geopolitics_fee_zero"),
+    "pm3: выборы в теме": (
+        "tools.polymarket_ukraine", "and not NOT_WAR.search(title or \"\")", "", "tests/test_polymarket_ukraine.py::test_on_topic"),
+    "pm3: режимы на разных точках": (
+        "tools.polymarket_ukraine", "common = [v for v in by.values() if all(mo in v for mo in modes)]",
+        "common = list(by.values())", "tests/test_polymarket_ukraine.py::test_report_compares_modes_on_common_points"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

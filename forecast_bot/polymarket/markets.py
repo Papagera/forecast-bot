@@ -83,8 +83,8 @@ class Market:
         return cls(**d)
 
 
-def from_gamma(m: dict) -> Optional[Market]:
-    """Рынок годится для бэктеста: бинарный Yes/No, однозначный итог, срок жизни ≤ 30 дней."""
+def from_gamma(m: dict, max_life_days: float = MAX_LIFE_DAYS) -> Optional[Market]:
+    """Рынок годится для бэктеста: бинарный Yes/No, однозначный итог, срок жизни ≤ 30 дней (№3 «Украина» — ≤ 60)."""
     try:
         outcomes = json.loads(m.get("outcomes") or "[]")
         prices = json.loads(m.get("outcomePrices") or "[]")
@@ -99,7 +99,7 @@ def from_gamma(m: dict) -> Optional[Market]:
     if not start or not closed or closed <= start:
         return None
     life = (closed - start).total_seconds() / 86400
-    if life > MAX_LIFE_DAYS or life < MIN_LIFE_DAYS:
+    if life > max_life_days or life < MIN_LIFE_DAYS:
         return None
     return Market(id=str(m.get("id")), question=m.get("question") or "", slug=m.get("slug") or "",
                   description=(m.get("description") or "")[:4000], start=start, closed=closed,
