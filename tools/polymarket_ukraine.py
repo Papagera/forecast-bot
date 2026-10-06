@@ -41,7 +41,9 @@ TAGS = {"ukraine": 10, "russia": 10, "geopolitics": 10, "putin": 10, "zelensky":
 FOLDER_ID = 55
 STAGE3_START = datetime(2026, 10, 6, 16, tzinfo=UTC)
 STAGE3_CAP_USD = 15.0
-STAGE3_DAY_USD = 8.0
+# Никита 06.10.2026: «закончи сегодня». В этот день $8 приложения уже ушли на 3A/№2, поэтому суточный потолок на
+# время прогона №3 = $8 + потолок этапа $15 с запасом — связывает именно потолок этапа (pm3:*). Лимит машины $50 — в силе.
+STAGE3_DAY_USD = 24.0
 LEDGER_PREFIX = "pm3"
 KW_MODEL = "openrouter/anthropic/claude-haiku-4.5"
 MODES = ("none", "gdelt", "tg")
@@ -186,8 +188,12 @@ def kw_prompt(title: str, questions: list[str]) -> list[dict]:
 async def _keywords(_a) -> int:
     from forecast_bot import guarded_llm
 
+    from forecast_bot import ai_guard
+
     guarded_llm.install_sentinel()
     _check_app()
+    ai_guard.APP_LIMITS[B.APP] = {"day_usd": STAGE3_DAY_USD}
+    guarded_llm.start_run(max(0.0, stage_budget_left()))
     path = d() / "keywords.json"
     kw = json.loads(path.read_text()) if path.exists() else {}
     by_ev = defaultdict(list)
