@@ -58,6 +58,8 @@ class Verdict:
     numbers_unverified: int = 0
     facts_dropped: int = 0
     dropped: list[str] = field(default_factory=list)
+    facts_cited: int = 0                                  # оставленных строк справки со ссылкой [S#] (не на вопрос)
+    cited_sources: set = field(default_factory=set)       # какие источники процитированы в оставленных строках
 
     @property
     def unverified_share(self) -> float:
@@ -70,10 +72,20 @@ def check(brief: str, sources: dict[str, str]) -> Verdict:
     kept, excerpts, dropped = [], [], []
     total = unverified = 0
     excerpt_len = 0
+    cited_kept, cited_src = 0, set()
+
+    def keep(line: str) -> None:
+        nonlocal cited_kept
+        kept.append(line)
+        ids = (cited_ids(line) & set(norm)) - {"S0"}
+        if ids:
+            cited_kept += 1
+            cited_src.update(ids)
+
     for line in brief.splitlines():
         nums = numbers_in(line)
         if not nums:
-            kept.append(line)
+            keep(line)
             continue
         total += len(nums)
         ids = (cited_ids(line) & set(norm)) | {"S0"}
@@ -89,7 +101,7 @@ def check(brief: str, sources: dict[str, str]) -> Verdict:
             unverified += missing
             dropped.append(line.strip())
             continue
-        kept.append(line)
+        keep(line)
         for num, sid, pos in found:
             if sid == "S0" or excerpt_len >= EXCERPTS_LIMIT:
                 continue
@@ -105,7 +117,7 @@ def check(brief: str, sources: dict[str, str]) -> Verdict:
     if dropped:
         parts += ["", f"Note: {len(dropped)} fact(s) were removed because their numbers could not be found in "
                       "the cited sources. Do not reintroduce such numbers."]
-    return Verdict("\n".join(parts), total, unverified, len(dropped), dropped)
+    return Verdict("\n".join(parts), total, unverified, len(dropped), dropped, cited_kept, cited_src)
 
 
 def unsupported_numbers(text: str, corpus: str) -> tuple[int, int]:

@@ -263,6 +263,11 @@ async def run(
                         asknews_calls=bot.asknews_calls.pop(qid, 0),
                         web_searches=getattr(bot, "web_searches", {}).pop(qid, 0),
                         **getattr(bot, "research_stats", {}).pop(qid, {}))
+            sets = getattr(bot, "prediction_sets", {}).pop(qid, None)
+            if sets:
+                from forecast_bot import calib
+
+                base.update(calib.summarize(sets))
             if variant:
                 base["variant"] = variant
 

@@ -48,6 +48,13 @@ EXTRA_COLUMNS = (
     ("forecast_unverified", "INTEGER"),   # из них нет ни в исследовании, ни в вопросе
     ("variant", "TEXT"),                  # метка варианта замера (блок 2.1)
     ("web_searches", "INTEGER"),          # веб-поисков агента (OpenRouter + Exa) на вопрос
+    # калибровка (этап 4, 06.10.2026): все прогнозы до агрегации и «сила справки», без новых вызовов ИИ
+    ("predictions_all", "TEXT"),          # JSON: вероятности / {вариант: p} / медианы распределений
+    ("predictions_n", "INTEGER"),
+    ("predictions_spread", "REAL"),       # max − min (MC — наибольший по вариантам)
+    ("predictions_sd", "REAL"),
+    ("research_cited_facts", "INTEGER"),  # строк справки с подтверждённой ссылкой [S#]
+    ("research_official", "INTEGER"),     # 1 — среди процитированных есть официальный источник
 )
 
 # Статусы строки.
