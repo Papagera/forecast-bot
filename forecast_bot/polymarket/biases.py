@@ -192,6 +192,11 @@ def ladder_date(item: str, question: str, year: int) -> Optional[datetime]:
     return datetime(int(m.group(3) or year), _MON[m.group(1).lower()], int(m.group(2)), tzinfo=UTC)
 
 
+def ladder_template(question: str) -> str:
+    """Вопрос без даты — ступени одной лестницы совпадают по нему."""
+    return re.sub(r"\s+", " ", _DATE.sub("", question or "")).strip().lower()
+
+
 def ladder_windows(steps: list[dict], hours: Iterable[int], price: Callable = active_price) -> list[Window]:
     """steps: [{date, history, volume, fee_rate}] одной лестницы. Нарушение: P(к d1) > P(к d2) при d1 < d2.
     Купить YES(d2) и NO(d1): выплата ≥ 1 в любом исходе, прибыль ≥ p1 − p2 − издержки."""
@@ -201,6 +206,8 @@ def ladder_windows(steps: list[dict], hours: Iterable[int], price: Callable = ac
         for a in range(len(steps)):
             for b in range(a + 1, len(steps)):
                 s1, s2 = steps[a], steps[b]
+                if s1["date"] >= s2["date"] or s1.get("tmpl") != s2.get("tmpl"):
+                    continue  # не ступени одной лестницы: та же дата (другой порог) или другой вопрос
                 p1, p2 = price(s1["history"], h), price(s2["history"], h)
                 if p1 is None or p2 is None:
                     continue

@@ -270,7 +270,7 @@ def cmd_c(_a) -> int:
                 dt = X.ladder_date(m.rule, m.question, m.end_planned.year)
                 if dt:
                     steps.append({"date": dt, "history": m.history, "volume": m.volume, "fee_rate": m.fee_rate,
-                                  "group": ev["id"]})
+                                  "group": ev["id"], "tmpl": X.ladder_template(m.question)})
             if len(steps) >= 2:
                 windows += X.ladder_windows(steps, hours)
     ws = X.dedupe_windows(windows)
@@ -292,7 +292,8 @@ def cmd_c(_a) -> int:
                     "group": ev["id"]} for m in legs]
             verified += [w for w in X.negrisk_windows(mem, hours, price=X.trade_price)]
         else:
-            steps = [{"date": dt, "history": m.history, "volume": m.volume, "fee_rate": m.fee_rate, "group": ev["id"]}
+            steps = [{"date": dt, "history": m.history, "volume": m.volume, "fee_rate": m.fee_rate, "group": ev["id"],
+                      "tmpl": X.ladder_template(m.question)}
                      for m in legs if (dt := X.ladder_date(m.rule, m.question, m.end_planned.year))]
             verified += X.ladder_windows(steps, hours, price=X.trade_price)
     vs = X.dedupe_windows(verified)
@@ -332,8 +333,10 @@ def c_report() -> list[str]:
            f"Проверено событий: negRisk с полным списком исходов {neg_full}, лестниц «к дате» {lad}.", "",
            "| тип | окон | событий | сентябрь: окон | медиана прибыли на комплект | p90 | мин. объём ноги, медиана |",
            "|---|---|---|---|---|---|---|"]
-    for kind in ("negrisk_over", "negrisk_under", "ladder"):
-        k = [w for w in ws if w["kind"] == kind]
+    wt = load_jsonl(d() / "c_windows_trades.jsonl")
+    for src, kind in [(s, k) for k in ("negrisk_over", "negrisk_under", "ladder") for s in ("CLOB", "сделки")]:
+        k = [w for w in (ws if src == "CLOB" else wt) if w["kind"] == kind]
+        kind = f"{kind} · {'середина CLOB' if src == 'CLOB' else 'реальные сделки ±2 ч'}"
         if not k:
             out.append(f"| {kind} | 0 | 0 | 0 | — | — | — |")
             continue
@@ -459,10 +462,15 @@ async def _ask(user: str, prompt: str, max_tokens: int) -> str:
 
 
 def _json_tail(text: str):
-    import re
-
-    found = re.findall(r"[\[{].*[\]}]", text or "", re.S)
-    return json.loads(found[-1]) if found else None
+    """Первый JSON-объект/массив в ответе (модель иногда дописывает пояснение после него)."""
+    dec = json.JSONDecoder()
+    for i, ch in enumerate(text or ""):
+        if ch in "[{":
+            try:
+                return dec.raw_decode(text[i:])[0]
+            except ValueError:
+                continue
+    return None
 
 
 D_PROMPT = """Prediction market question: {q}
@@ -582,7 +590,7 @@ async def _run_c2(a) -> int:
 
     guarded_llm.start_run(max(0.0, min(C2_CAP_USD - stage_spent(":c2"), STAGE4_CAP_USD - stage_spent())))
     path = d() / "c2_pairs.jsonl"
-    done = {r["group"] for r in load_jsonl(path)}
+    done = {r["group"] for r in load_jsonl(path) if "error" not in r}  # упавшие на разборе — повторяем
     with path.open("a") as fh:
         for ms in c2_groups(load_markets(), a.groups):
             gid = "|".join(sorted(m.id for m in ms))
@@ -609,7 +617,10 @@ async def _run_c2(a) -> int:
 
 def c2_report() -> list[str]:
     by_id = {m.id: m for m in load_markets()}
-    recs = [r for r in load_jsonl(d() / "c2_pairs.jsonl") if "error" not in r]
+    last = {}
+    for r in load_jsonl(d() / "c2_pairs.jsonl"):
+        last[r["group"]] = r  # повтор после ошибки разбора замещает её
+    recs = [r for r in last.values() if "error" not in r]
     pairs = [(a, b) for r in recs for a, b in r["pairs"] if a in by_id and b in by_id]
     wrong = sum(1 for a, b in pairs if by_id[a].outcome == 1 and by_id[b].outcome == 0)
     ws = []
@@ -621,7 +632,17 @@ def c2_report() -> list[str]:
         ws += X.implication_windows(legs[0], legs[1], hours, f"{a}>{b}")
     ws = X.dedupe_windows(ws)
     e = sorted(w.edge for w in ws)
+    # фактическая выплата комплекта NO(i) + YES(j): 1 − y_i + y_j; при ложной связи (y_i=1, y_j=0) — 0
+    real = []
+    for w in ws:
+        a, b = w.group.split(">")
+        pa, pb = X.active_price(by_id[a].history, w.ts), X.active_price(by_id[b].history, w.ts)
+        cost = (1 - pa) + pb + (pa - pb - w.edge)
+        real.append(((1 - by_id[a].outcome + by_id[b].outcome) - cost, cost, w))
+    roi = sum(x[0] for x in real) / sum(x[1] for x in real) if real else None
+    sep = [x for x in real if datetime.fromtimestamp(x[2].ts, UTC).month == 9]
     return ["### В+. Связи между разными событиями, найденные ИИ по тексту", "",
+            f"Фактический результат окон по исходам: ROI {_pct(roi)} на {len(real)} окнах; в сентябре окон {len(sep)}.",
             f"Групп проверено {len(recs)}, пар «Да(i) ⇒ Да(j)» {len(pairs)}; ИИ ошибся в {wrong} "
             f"(i сыграл, j нет — связь ложная, окно по ней было бы убытком).",
             f"Окон P(i) > P(j) + издержки: {len(ws)} (пар {len({w.group for w in ws})}); медиана прибыли "

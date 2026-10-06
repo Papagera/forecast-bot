@@ -377,6 +377,9 @@ SOURCE_MUTATIONS = {
     "pm4: В — застывшая котировка пустого стакана как цена": (
         "forecast_bot.polymarket.biases", "    return p if len(recent) >= 2 else None", "    return p",
         "tests/test_polymarket_biases.py::test_frozen_quotes_are_not_arbitrage"),
+    "pm4: лестница из одной даты / разных вопросов": (
+        "forecast_bot.polymarket.biases", '                if s1["date"] >= s2["date"] or s1.get("tmpl") != s2.get("tmpl"):',
+        "                if False:", "tests/test_polymarket_biases.py::test_ladder_needs_later_date_and_same_question"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

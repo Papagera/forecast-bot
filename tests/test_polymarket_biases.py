@@ -254,7 +254,7 @@ def test_c2_groups_distinct_events_same_month():
 
 def test_frozen_quotes_are_not_arbitrage():
     """Все исходы матча стоят по 0.50 неделю — сумма 1.5, но это пустой стакан, а не цены."""
-    frozen = [{"history": [(1_000_000 - k * 3600, 0.5) for k in range(30)], "volume": 50_000.0, "fee_rate": 0.0,
+    frozen = [{"history": [(1_000_000 - k * 3600, 0.5) for k in range(29, -1, -1)], "volume": 50_000.0, "fee_rate": 0.0,
                "outcome": int(i == 0), "group": "g"} for i in range(3)]
     assert X.negrisk_windows(frozen, [1_000_100]) == []
     assert X.active_price([(1_000_000 - 7200, 0.4), (1_000_000, 0.45)], 1_000_100) == 0.45
@@ -265,3 +265,17 @@ def test_trade_price_windows_need_recent_trades_on_every_leg():
             {"history": [(1_000_000, 0.6)], "volume": 50_000.0, "fee_rate": 0.0, "outcome": 0, "group": "g"}]
     assert len(X.negrisk_windows(legs, [1_000_100], price=X.trade_price)) == 1
     assert X.negrisk_windows(legs, [1_000_000 + 3 * 3600], price=X.trade_price) == []   # сделки старше 2 ч
+
+
+def test_ladder_needs_later_date_and_same_question():
+    d = datetime(2026, 7, 31, tzinfo=UTC)
+    same_date = [dict(_leg(0.6, 0), date=d, tmpl=X.ladder_template("Will K hit $11B by July 31?")),
+                 dict(_leg(0.3, 0), date=d, tmpl=X.ladder_template("Will K hit $15B by July 31?"))]
+    assert X.ladder_windows(same_date, [1_000_100]) == []               # порог, а не дата — не лестница
+    d2 = datetime(2026, 8, 31, tzinfo=UTC)
+    other_q = [dict(_leg(0.6, 0), date=d, tmpl=X.ladder_template("Will A happen by July 31?")),
+               dict(_leg(0.3, 0), date=d2, tmpl=X.ladder_template("Will B happen by August 31?"))]
+    assert X.ladder_windows(other_q, [1_000_100]) == []
+    ok = [dict(_leg(0.6, 0), date=d, tmpl=X.ladder_template("Will A happen by July 31?")),
+          dict(_leg(0.3, 1), date=d2, tmpl=X.ladder_template("Will A happen by August 31?"))]
+    assert len(X.ladder_windows(ok, [1_000_100])) == 1
