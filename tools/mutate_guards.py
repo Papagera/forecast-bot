@@ -219,6 +219,32 @@ SOURCE_MUTATIONS = {
     "polymarket: data.gdeltproject.org — не https": (
         "forecast_bot.polymarket.http", 'if urlparse(url).scheme != "https" or host not in ALLOWED_HOSTS:',
         "if host not in ALLOWED_HOSTS:", "tests/test_polymarket.py::test_http_allows_only_get_to_whitelist"),
+    "поиск: нет отдельной строки в леджере": (
+        "forecast_bot.guarded_llm", "            if search_cost:\n", "            if False:\n",
+        "tests/test_websearch.py::test_search_writes_two_ledger_rows_and_returns_sources"),
+    "поиск: цена по прайсу вместо факта": (
+        "forecast_bot.guarded_llm", "if total is not None and upstream is not None and total >= upstream:", "if False:",
+        "tests/test_websearch.py::test_split_search_cost_prefers_fact_over_price"),
+    "поиск: строка леджера не учтена сторожем": (
+        "forecast_bot.guarded_llm", "                GUARDED_CALLS[user] += 1  # строка леджера = учтённый вызов",
+        "                pass  # строка леджера = учтённый вызов",
+        "tests/test_websearch.py::test_agent_with_web_search_end_to_end"),
+    "AskNews разрешён в замерах": (
+        "forecast_bot.bot", '        if guarded_llm.APP != "forecast":', "        if False:",
+        "tests/test_websearch.py::test_asknews_forbidden_outside_battle"),
+    "по умолчанию снова AskNews": (
+        "forecast_bot.bot", 'return os.environ.get("FORECAST_SEARCH", "web").strip() or "web"',
+        'return os.environ.get("FORECAST_SEARCH", "asknews").strip() or "asknews"',
+        "tests/test_websearch.py::test_web_is_default_search_and_asknews_needs_flag"),
+    "402: пустой кошелёк не останавливает опрос": (
+        "forecast_bot.run", 'if is_credit_error(row["error"]):', "if False:",
+        "tests/test_credits.py::test_credit_error_stops_poll_loudly_and_sends_nothing"),
+    "402: строка цикла молчит про ошибки вопросов": (
+        "forecast_bot.run", 'stats.question_errors += res.count("error")', "pass",
+        "tests/test_credits.py::test_loop_line_shows_question_errors_and_credit_alarm"),
+    "402: итог запуска без красной строки": (
+        "forecast_bot.summary", 'credit = sum(1 for r in errors if is_credit_error(r["error"] or ""))', "credit = 0",
+        "tests/test_credits.py::test_summary_flags_credit_errors"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

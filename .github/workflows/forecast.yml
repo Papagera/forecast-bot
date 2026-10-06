@@ -75,7 +75,7 @@ jobs:
         run: >
           python -m forecast_bot.run --mode submit
           --tournaments "${{ vars.FORECAST_TOURNAMENTS || 'fall,minibench' }}" --quant-hints
-          --research agent --agent-model openrouter/google/gemini-3.8-flash --agent-max-news 2
+          --research agent --search web --agent-model openrouter/google/gemini-3.8-flash --agent-max-news 2
           --model openrouter/anthropic/claude-opus-5.5 --reasoning high --predictions 1 --run-budget 1.0
           --loop-minutes 335 --poll-minutes 10
 

@@ -47,6 +47,7 @@ EXTRA_COLUMNS = (
     ("forecast_numbers", "INTEGER"),      # чисел в рассуждении прогнозиста
     ("forecast_unverified", "INTEGER"),   # из них нет ни в исследовании, ни в вопросе
     ("variant", "TEXT"),                  # метка варианта замера (блок 2.1)
+    ("web_searches", "INTEGER"),          # веб-поисков агента (OpenRouter + Exa) на вопрос
 )
 
 # Статусы строки.

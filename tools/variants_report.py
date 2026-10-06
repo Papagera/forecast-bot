@@ -19,10 +19,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from forecast_bot import paths  # noqa: E402
 
-ORDER = ["A", "B", "C", "D", "H", "S", "G"]
+ORDER = ["A", "B", "C", "D", "H", "S", "G", "W"]
 LABEL = {"A": "агент Opus 5.5 high", "B": "исследование Haiku → итог Opus high",
          "C": "исследование Haiku → итог Gemini Flash", "D": "шаблон Gemini Flash + AskNews",
-         "H": "Haiku 4.5 → Opus high (эталон)", "S": "Sonnet 5.5 → Opus high", "G": "Gemini 3.8 Flash → Opus high"}
+         "H": "Haiku 4.5 → Opus high (эталон)", "S": "Sonnet 5.5 → Opus high", "G": "Gemini 3.8 Flash → Opus high",
+         "W": "Gemini 3.8 Flash + веб-поиск → Opus high"}
 
 
 def summary_value(qtype: str, pred: str):

@@ -22,6 +22,7 @@ def agent_env(monkeypatch, fake_llm, fake_asknews):
         return "**Свежая новость** событие ещё не произошло"
 
     monkeypatch.setattr(ForecastBot, "_asknews_latest", fake_news)
+    monkeypatch.setattr(ForecastBot, "_web_search", fake_news)  # бой с 05.10.2026: веб-поиск OpenRouter + Exa
     monkeypatch.setattr(A, "fred_series", lambda sid: f"FRED {sid}: последнее 4.1")
     monkeypatch.setattr(A, "stock_history", lambda s: f"Stooq {s}: 100")
     monkeypatch.setattr(A, "fetch_url", lambda u: "страница")
@@ -44,7 +45,7 @@ def _run_one(qs=None):
 def test_agent_research_reaches_forecaster_and_ledger(agent_env, fake_llm):
     result, _ = _run_one()
     row, = result.rows
-    assert row["status"] == "ok" and row["asknews_calls"] == 1 and agent_env == ["событие"]
+    assert row["status"] == "ok" and row["web_searches"] == 1 and row["asknews_calls"] == 0 and agent_env == ["событие"]
     forecast_prompts = [p for p in fake_llm.prompts if '"Probability: ZZ%"' in p]
     assert forecast_prompts and "Справка агента" in forecast_prompts[0] and "FRED UNRATE" in forecast_prompts[0]
     conn = ai_guard._conn()
@@ -56,7 +57,7 @@ def test_agent_research_reaches_forecaster_and_ledger(agent_env, fake_llm):
 def test_news_calls_capped_per_question(agent_env, fake_llm):
     fake_llm.tool_plan = ["search_news"] * 5
     result, _ = _run_one()
-    assert result.rows[0]["asknews_calls"] == A.MAX_NEWS_CALLS == len(agent_env)
+    assert result.rows[0]["web_searches"] == A.MAX_NEWS_CALLS == len(agent_env)
 
 
 def test_steps_capped_and_last_step_has_no_tool_use(agent_env, fake_llm):
@@ -92,9 +93,10 @@ def test_reasoning_flag_sets_effort_and_drops_temperature(monkeypatch):
     assert build_llms()["default"].litellm_kwargs.get("temperature") == 0.3
 
 
-def test_agent_mode_requires_asknews_key():
+def test_agent_mode_requires_asknews_key_only_with_asknews_search():
     base = {"METACULUS_TOKEN": "t", "OPENROUTER_API_KEY": "k", "FORECAST_RESEARCH": "agent"}
-    assert R.missing_keys(base) == ["ASKNEWS_API_KEY"]
+    assert R.missing_keys(base) == []                                   # по умолчанию — веб-поиск
+    assert R.missing_keys({**base, "FORECAST_SEARCH": "asknews"}) == ["ASKNEWS_API_KEY"]
 
 
 def test_guarded_completion_counts_and_blocks_budget(fake_llm, monkeypatch):
@@ -148,6 +150,7 @@ def test_agent_survives_asknews_wallet_empty(agent_env, fake_llm, monkeypatch):
     """05.10.2026: AskNews 402001 «wallet balance is depleted» ронял исследование → вопрос без прогноза."""
     from forecast_bot.bot import ForecastBot
 
+    monkeypatch.setenv("FORECAST_SEARCH", "asknews")
     calls = []
 
     async def broken(self, query):

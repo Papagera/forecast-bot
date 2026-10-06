@@ -22,12 +22,21 @@ def render(since: float) -> str:
     run_cost = ai_guard.app_cost_since(APP, since)
     day_cost = ai_guard.spent_today_app(APP)
     sent = [r for r in rows if r["submitted_at"]]
+    errors = [r for r in rows if r["status"] == "error"]
     lines = [
         "## forecast-bot",
-        f"Вопросов: {len(rows)} · отправлено: {len(sent)} · $ за запуск: {run_cost:.4f} · "
+        f"Вопросов: {len(rows)} · отправлено: {len(sent)} · ошибок: {len(errors)} · $ за запуск: {run_cost:.4f} · "
         f"$ за сутки (леджер): {day_cost:.4f}",
         "",
     ]
+    from forecast_bot.run import is_credit_error
+
+    credit = sum(1 for r in errors if is_credit_error(r["error"] or ""))
+    if credit:
+        lines += [f"🔴 **OpenRouter: кредиты исчерпаны (402)** — {credit} попыток прогноза отклонено, ничего не "
+                  "отправлено. Нужно пополнить баланс OpenRouter.", ""]
+    elif errors:
+        lines += [f"⚠ Последняя ошибка: {(errors[-1]['error'] or '')[:200]}", ""]
     loop_file = paths.state_dir() / "loop.json"
     if loop_file.exists():
         import json

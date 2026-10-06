@@ -87,14 +87,20 @@ class FakeLlm:
         self.kwargs: list[dict] = []
         self.tool_plan = ["search_news", "fred_series"]  # что «агент» вызовет по шагам
         self.hallucinate = False  # добавить в справку выдуманное число
+        self.web_searches = 0
+        self.raise_exc: Exception | None = None  # отказ провайдера (например, 402 OpenRouter)
 
     async def __call__(self, *args: Any, messages: list | None = None, model: str = "", **kwargs: Any) -> ModelResponse:
         text = str(messages[-1]["content"]) if messages else ""
         self.calls.append(model)
+        if self.raise_exc is not None:
+            raise self.raise_exc
         self.prompts.append(text)
         self.kwargs.append(kwargs)
         if kwargs.get("tools"):
             return self._agent_turn(model, messages, kwargs)
+        if (kwargs.get("extra_body") or {}).get("plugins"):
+            return self._web_search_turn(model)
         response = ModelResponse(
             model=model,
             choices=[{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": self._answer(text)}}],
@@ -103,6 +109,20 @@ class FakeLlm:
         if self.billed_cost is not None:
             response._hidden_params = {"additional_headers": {"llm_provider-x-litellm-response-cost": self.billed_cost}}
         return response
+
+    def _web_search_turn(self, model: str) -> ModelResponse:
+        """Как живой ответ OpenRouter с плагином web (05.10.2026): аннотации url_citation, usage.cost = модель + Exa."""
+        self.web_searches += 1
+        anns = [{"type": "url_citation", "url_citation": {
+            "url": f"https://example.org/news/{i}", "title": f"Заголовок {i}",
+            "content": f"По данным на 4 октября, ставка составляет 3.75% (источник {i}).", "start_index": 0, "end_index": 0}}
+            for i in (1, 2)]
+        resp = ModelResponse(model=model, choices=[{"index": 0, "finish_reason": "stop", "message": {
+            "role": "assistant", "content": "ok", "annotations": anns}}],
+            usage={"prompt_tokens": 4068, "completion_tokens": 40, "total_tokens": 4108, "cost": 0.010201,
+                   "cost_details": {"upstream_inference_cost": 0.003201}})
+        resp._hidden_params = {"additional_headers": {"llm_provider-x-litellm-response-cost": 0.010201}}
+        return resp
 
     def _agent_turn(self, model: str, messages: list, kwargs: dict) -> ModelResponse:
         """Фейковый агент: по шагу на инструмент из tool_plan, затем итоговая справка."""

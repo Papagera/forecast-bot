@@ -113,19 +113,30 @@ class ForecastBot(FallTemplateBot2026):
         kwargs["skip_previously_forecasted_questions"] = False
         super().__init__(**kwargs)
         self.asknews_calls: Counter[int] = Counter()
+        self.web_searches: Counter[int] = Counter()  # веб-поиски агента (OpenRouter + Exa) на вопрос
         self.research_stats: dict[int, dict] = {}  # сверка чисел исследования агента (verify.check)
         self.quant_hints: dict[int, str] = {}      # подсказки quant, ушедшие прогнозисту (Market Pulse)
         # У шаблона семафор — атрибут класса, привязывается к первому event loop; второй
         # asyncio.run в том же процессе (тесты) упал бы «bound to a different event loop».
         self._concurrency_limiter = asyncio.Semaphore(self._max_concurrent_questions)
 
+    @staticmethod
+    def search_backend() -> str:
+        """Поиск агента: web (OpenRouter + Exa, по умолчанию с 05.10.2026) | asknews (выключен) | none."""
+        return os.environ.get("FORECAST_SEARCH", "web").strip() or "web"
+
+    @property
+    def agent_max_searches(self) -> int:
+        from forecast_bot.agent import MAX_NEWS_CALLS
+
+        return int(os.environ.get("FORECAST_AGENT_MAX_NEWS", MAX_NEWS_CALLS))
+
     @property
     def asknews_calls_per_research(self) -> int:
+        """Сколько вызовов AskNews может уйти на вопрос — для месячного потолка AskNews."""
         researcher = self.get_llm("researcher")
         if researcher == AGENT_RESEARCHER:
-            from forecast_bot.agent import MAX_NEWS_CALLS
-            # верхняя граница — для проверки месячного потолка
-            return int(os.environ.get("FORECAST_AGENT_MAX_NEWS", MAX_NEWS_CALLS))
+            return self.agent_max_searches if self.search_backend() == "asknews" else 0
         return ASKNEWS_CALLS.get(researcher, 0) if isinstance(researcher, str) else 0
 
     async def _multiple_choice_prompt_to_forecast(self, question: Any, prompt: str) -> Any:
@@ -206,17 +217,20 @@ class ForecastBot(FallTemplateBot2026):
     async def _agent_research(self, question: Any) -> str:
         from forecast_bot.agent import ResearchAgent
 
+        backend = self.search_backend()
+        news = {"web": self._web_search, "asknews": self._asknews_latest}.get(backend)
         agent = ResearchAgent(
             os.environ.get("FORECAST_AGENT_MODEL", os.environ.get("FORECAST_MODEL", DEFAULT_MODEL)),
             question_budget_usd=float(os.environ.get("FORECAST_QUESTION_BUDGET", "0.30")),
-            news=self._asknews_latest,
-            max_news=self.asknews_calls_per_research,
+            news=news,
+            max_news=self.agent_max_searches,
         )
         async with self._concurrency_limiter:
             try:
                 return await agent.research(question)
             finally:
-                self.asknews_calls[question.id_of_question] += agent.news_calls
+                counter = self.web_searches if backend == "web" else self.asknews_calls
+                counter[question.id_of_question] += agent.news_calls
                 if agent.verdict is not None:
                     self.research_stats[question.id_of_question] = {
                         "research_numbers": agent.verdict.numbers_total,
@@ -224,9 +238,19 @@ class ForecastBot(FallTemplateBot2026):
                         "research_dropped": "\n".join(agent.verdict.dropped)[:4000],
                     }
 
+    async def _web_search(self, query: str) -> str:
+        from forecast_bot import websearch
+
+        return await websearch.search(query)
+
     async def _asknews_latest(self, query: str) -> str:
         """Один запрос AskNews «latest news» (48 ч) — та же разметка, что у пресета шаблона
         (forecasting_tools/helpers/asknews_searcher.py:get_formatted_news_async), без архива."""
+        from forecast_bot import guarded_llm
+
+        if guarded_llm.APP != "forecast":
+            # Урок 05.10.2026: замеры и бэктесты съели боевой кошелёк AskNews (231 вызов по журналу) — вне боя нельзя.
+            raise RuntimeError(f"AskNews запрещён вне боя (приложение {guarded_llm.APP!r})")
         from asknews_sdk import AsyncAskNewsSDK
         from forecasting_tools import AskNewsSearcher
 
