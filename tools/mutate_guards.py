@@ -185,7 +185,7 @@ SOURCE_MUTATIONS = {
         "forecast_bot.polymarket.http", 'if urlparse(url).scheme != "https" or host not in ALLOWED_HOSTS:', "if False:",
         "tests/test_polymarket.py::test_http_allows_only_get_to_whitelist"),
     "polymarket: рынки дольше 30 дней": (
-        "forecast_bot.polymarket.markets", "if life > max_life_days or life < MIN_LIFE_DAYS:", "if False:",
+        "forecast_bot.polymarket.markets", "if life > max_life_days or life < min_life_days:", "if False:",
         "tests/test_polymarket.py::test_from_gamma_rejects"),
     "polymarket: сделка без порога": (
         "forecast_bot.polymarket.backtest", "    if abs(edge) < thr:\n        return None", "    if False:\n        return None",
@@ -335,6 +335,33 @@ SOURCE_MUTATIONS = {
     "pm3: режимы на разных точках": (
         "tools.polymarket_ukraine", "common = [v for v in by.values() if all(mo in v for mo in modes)]",
         "common = list(by.values())", "tests/test_polymarket_ukraine.py::test_report_compares_modes_on_common_points"),
+    "pm4: правила отбираются и на проверке": (
+        "tools.polymarket_biases", '    train = [r for r in rows if r["period"] == "train"]', "    train = rows",
+        "tests/test_polymarket_biases.py::test_cmd_a_selects_rules_on_train_only"),
+    "pm4: правило без минимума сделок": (
+        "forecast_bot.polymarket.biases", "if len(ts) >= min_trades and (roi := SB.roi(ts)) is not None and roi > 0:",
+        "if (roi := SB.roi(ts)) is not None and roi > 0:", "tests/test_polymarket_biases.py::test_select_rules_needs_min_trades_and_positive_roi"),
+    "pm4: «продолжаем» без интервала": (
+        "forecast_bot.polymarket.biases", "and ci and ci[0] > 0 and len(ts) >= MIN_TRADES)", "and len(ts) >= MIN_TRADES)",
+        "tests/test_polymarket_biases.py::test_verdict_go_needs_30_trades_and_ci_above_zero"),
+    "pm4: А — точка после закрытия рынка": (
+        "tools.polymarket_biases", "if t <= m.start + timedelta(hours=1) or m.closed <= t:",
+        "if t <= m.start + timedelta(hours=1):", "tests/test_polymarket_biases.py::test_a_rows_from_planned_end_fresh_price_and_open_market"),
+    "pm4: А — застывшая котировка как цена": (
+        "tools.polymarket_biases", 'if px is None or (t - px[0]).total_seconds() > 3 * 3600:', "if px is None:",
+        "tests/test_polymarket_biases.py::test_a_rows_from_planned_end_fresh_price_and_open_market"),
+    "pm4: В — неполный список исходов как арбитраж": (
+        "forecast_bot.polymarket.biases", "if len(members) < 2 or sum(m[\"outcome\"] for m in members) != 1:",
+        "if len(members) < 2:", "tests/test_polymarket_biases.py::test_negrisk_windows_sum_over_and_exhaustive_only"),
+    "pm4: В — издержки ног не вычитаются": (
+        "forecast_bot.polymarket.biases", "s, cost = sum(ps), sum(costs)", "s, cost = sum(ps), 0.0",
+        "tests/test_polymarket_biases.py::test_negrisk_windows_sum_over_and_exhaustive_only"),
+    "pm4: Г — середина в момент сделки": (
+        "forecast_bot.polymarket.biases", "mid = price_at(mids, ts - 1, max_age_s)", "mid = price_at(mids, ts, max_age_s)",
+        "tests/test_polymarket_biases.py::test_simulate_quotes_uses_mid_strictly_before_trade"),
+    "pm4: Г — сделка по «Нет» не зеркалится": (
+        "forecast_bot.polymarket.biases", "    if str(trade.get(\"asset\")) != str(yes_token):", "    if False:",
+        "tests/test_polymarket_biases.py::test_yes_view_mirrors_no_token"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

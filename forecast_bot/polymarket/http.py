@@ -11,12 +11,14 @@ import requests
 ALLOWED_HOSTS = {"gamma-api.polymarket.com", "clob.polymarket.com", "api.gdeltproject.org",
                  "data.gdeltproject.org",  # статические выгрузки GDELT (решение income 05.10.2026) — только GET
                  # бэктест №2 «ряды данных» (06.10.2026): источники резолва и прокси, только GET без ключей
-                 "api.binance.com", "query1.finance.yahoo.com", "home.treasury.gov", "alfred.stlouisfed.org"}
+                 "api.binance.com", "query1.finance.yahoo.com", "home.treasury.gov", "alfred.stlouisfed.org",
+                 # этап 4, гипотеза Г: публичная история сделок (только GET; адреса кошельков не сохраняются)
+                 "data-api.polymarket.com"}
 # GDELT: «Please limit requests to one every 5 seconds» (ответ API 05.10.2026); на практике после нарушений штраф
 # дольше и продлевается повторами — держим 10 с между запросами.
 MIN_INTERVAL_S = {"api.gdeltproject.org": 10.0, "data.gdeltproject.org": 0.2, "gamma-api.polymarket.com": 0.3, "clob.polymarket.com": 0.3,
                   "api.binance.com": 0.3, "query1.finance.yahoo.com": 1.0, "home.treasury.gov": 1.0,
-                  "alfred.stlouisfed.org": 1.0}
+                  "alfred.stlouisfed.org": 1.0, "data-api.polymarket.com": 0.3}
 UA = {"User-Agent": "Mozilla/5.0 forecast-bot research (read-only)"}  # Yahoo без «Mozilla» отвечает 429
 RATE_BACKOFF_S = {"api.gdeltproject.org": 120.0}
 
