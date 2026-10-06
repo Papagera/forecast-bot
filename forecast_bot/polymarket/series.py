@@ -229,6 +229,16 @@ def points(m: SeriesMarket) -> dict[str, datetime]:
     return {p: t for p, t in out.items() if m.closed > t}
 
 
+def price_point(m: M.Market, t: datetime) -> Optional[tuple[datetime, float]]:
+    """(момент, цена YES) последней точки истории CLOB строго до t. Модель сравнивается с рынком при равной
+    информации: ряд для неё обрезается этим же моментом, а не t."""
+    prev = [(ts, p) for ts, p in m.history if ts < t.timestamp()]
+    if not prev:
+        return None
+    ts, p = prev[-1]
+    return datetime.fromtimestamp(ts, UTC), p
+
+
 def from_event(ev: dict) -> list[SeriesMarket]:
     """Рынки события, годные для бэктеста: класс известен, условие разобрано, срок жизни 3–30 дней (как в 3A)."""
     c = classify(ev.get("title") or "")

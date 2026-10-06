@@ -17,7 +17,7 @@ from datetime import datetime
 
 SHIFT_MAX = 1.5
 VOL_RANGE = (0.5, 2.0)
-MAX_TOKENS = 300
+MAX_TOKENS = 400  # 300 обрезал 2 ответа из 179 до JSON (06.10.2026)
 DEFAULT_MODEL = "openrouter/anthropic/claude-opus-5.5"
 
 UNDERLYING = {

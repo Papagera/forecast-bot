@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Optional
@@ -96,8 +96,15 @@ def _fmt_ci_pct(ci) -> str:
     return f"[{ci[0]:+.0%}; {ci[1]:+.0%}]" if ci else "—"
 
 
+def tradable(r: dict) -> bool:
+    """Рынок торговался (≥ $1k): цена — оценка рынка, а не застывшая котировка открытия (недельные DXY ~$50)."""
+    return B.segment(float(r.get("volume") or 0)) != "micro"
+
+
 def report(rows: Iterable[dict], boot: int = BOOT) -> str:
     rows = [r for r in rows if r.get("p_quant") is not None and r.get("p_mkt") is not None]
+    micro = Counter((r["family"], r["point"]) for r in rows if not tradable(r))
+    rows = [r for r in rows if tradable(r)]
     for r in rows:
         r["p_blend"] = blend(r["p_quant"], r["p_mkt"])
     groups = defaultdict(list)
@@ -117,10 +124,15 @@ def report(rows: Iterable[dict], boot: int = BOOT) -> str:
         out.append(f"| {key[0]} | {key[1]} | {len(rs)} | {len({r['cluster'] for r in rs})} | "
                    f"{_brier(rs, 'p_quant'):.3f} | {b_llm} | {_brier(rs, 'p_mkt'):.3f} | {_brier(rs, 'p_blend'):.3f} | "
                    f"{_log(rs, 'p_quant'):.3f} | {l_llm} | {_log(rs, 'p_mkt'):.3f} | {_fmt_ci(dq)} | {_fmt_ci(dl)} |")
+    if micro:
+        out += ["", "Вне сравнения — «микро» (объём < $1k, цена = котировка открытия): " +
+                ", ".join(f"{k[0]} {k[1]} {v}" for k, v in sorted(micro.items()))]
     out += ["", "Сделки: 1 доля на сигнал |p − цена| ≥ порога, до резолва; цена + полспреда + taker fee "
-            "(feeType Gamma); «микро» (<$1k) не торгуется. ROI = прибыль / вложено.", "",
-            "| класс | точка | модель | порог | сделок | кластеров | прибыльных | ROI | ROI 90% | ROI спред×0 / ×2 |",
-            "|---|---|---|---|---|---|---|---|---|---|"]
+            "(feeType Gamma). ROI = прибыль / вложено. Спред по сегменту — оценка (исторического стакана нет), "
+            "поэтому отдельно — только рынки ≥ $10k.", "",
+            "| класс | точка | модель | порог | сделок | кластеров | прибыльных | ROI | ROI 90% | ROI спред×0 / ×2 | "
+            "ROI ≥$10k (сделок) |",
+            "|---|---|---|---|---|---|---|---|---|---|---|"]
     for key in sorted(groups, key=lambda k: (k[0] == "все", k)):
         rs = groups[key]
         for model in ("p_quant", "p_llm"):
@@ -136,7 +148,9 @@ def report(rows: Iterable[dict], boot: int = BOOT) -> str:
                 ci = bootstrap(rm, lambda s: roi(trades(s, model, thr)), boot)
                 sens = " / ".join(f"{roi(trades(rm, model, thr, m)):+.0%}" for m in (0.0, 2.0))
                 wins = sum(1 for t in ts if t.pnl > 0)
+                big = trades([r for r in rm if float(r.get("volume") or 0) >= B.TAIL_MAX_VOLUME], model, thr)
+                big_s = f"{roi(big):+.0%} ({len(big)})" if big else "—"
                 out.append(f"| {key[0]} | {key[1]} | {'quant' if model == 'p_quant' else 'quant+LLM'} | {thr:.2f} | "
                            f"{len(ts)} | {len({r['cluster'] for r in traded})} | {wins / len(ts):.0%} | "
-                           f"{roi(ts):+.1%} | {_fmt_ci_pct(ci)} | {sens} |")
+                           f"{roi(ts):+.1%} | {_fmt_ci_pct(ci)} | {sens} | {big_s} |")
     return "\n".join(out)

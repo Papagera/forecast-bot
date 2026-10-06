@@ -281,13 +281,24 @@ SOURCE_MUTATIONS = {
         "tests/test_polymarket_series.py::test_parse_answer_clips_and_rejects"),
     "pm2: новости после t из кэша проходят": (
         "tools.polymarket_series", 'for x in r["articles"] if datetime.fromisoformat(x["seen"]) < t]',
-        'for x in r["articles"]]', "tests/test_polymarket_series.py::test_llm_through_guard_without_market_price_and_future_news"),
+        'for x in r["articles"]]', "tests/test_polymarket_series.py::test_load_news_drops_articles_at_or_after_t"),
+    "pm2: новости позже цены рынка в промпте": (
+        "tools.polymarket_series", "arts = [x for x in news[news_key] if x.seen < t_info]",
+        "arts = list(news[news_key])",
+        "tests/test_polymarket_series.py::test_llm_through_guard_without_market_price_and_future_news"),
     "pm2: бутстрэп по строкам, а не кластерам": (
         "forecast_bot.polymarket.series_backtest", 'by[r["cluster"]].append(r)', "by[id(r)].append(r)",
         "tests/test_polymarket_series.py::test_bootstrap_resamples_clusters_not_rows"),
     "pm2: «микро» торгуется": (
         "forecast_bot.polymarket.series_backtest", '        if seg == "micro":', "        if False:",
         "tests/test_polymarket_series.py::test_trades_skip_micro_and_pay_fee"),
+    "pm2: «микро» в сравнении Brier": (
+        "forecast_bot.polymarket.series_backtest", "    rows = [r for r in rows if tradable(r)]", "    rows = rows",
+        "tests/test_polymarket_series.py::test_report_excludes_micro_from_comparison"),
+    "pm2: quant видит ряд до t, а не до цены рынка": (
+        "tools.polymarket_series", "                dist, why = dist_for(m, t_info, st, cache)",
+        "                dist, why = dist_for(m, t, st, cache)",
+        "tests/test_polymarket_series.py::test_quant_sees_series_only_up_to_market_price_time"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

@@ -130,12 +130,15 @@ def quant_rows(markets: list[S.SeriesMarket], st: SD.Store) -> tuple[list[dict],
             if t < B.CUTOFF:
                 skip["t до cutoff"] += 1
                 continue
-            p_mkt = m.price_before(t.timestamp())
-            if p_mkt is None:
+            px = S.price_point(m, t)
+            if px is None:
                 skip["нет цены до t"] += 1
                 continue
+            t_info, p_mkt = px
             try:
-                dist, why = dist_for(m, t, st, cache)
+                # quant видит ряд только до момента цены рынка, с которой сравнивается: история CLOB часовая,
+                # цена «строго до t» — на час старше t; ряд до самого t дал бы модели лишний час информации
+                dist, why = dist_for(m, t_info, st, cache)
             except Exception as exc:
                 skip[f"ряд: {type(exc).__name__}"] += 1
                 continue
@@ -152,7 +155,8 @@ def quant_rows(markets: list[S.SeriesMarket], st: SD.Store) -> tuple[list[dict],
                 continue
             rows.append({"market": m.id, "event": m.event_id, "question": m.question, "cls": m.cls,
                          "family": m.family, "key": m.key, "cluster": m.cluster(), "group": group_key(m),
-                         "point": point, "t": t.isoformat(), "p_mkt": p_mkt, "p_quant": p, "outcome": m.outcome,
+                         "point": point, "t": t.isoformat(), "t_info": t_info.isoformat(), "p_mkt": p_mkt,
+                         "p_quant": p, "outcome": m.outcome,
                          "fee_rate": m.fee_rate, "volume": m.volume, "segment": B.segment(m.volume)})
     return rows, skip
 
@@ -365,6 +369,9 @@ async def run_llm(a) -> int:
             continue
         if a.limit and n >= a.limit:
             break
+        if not any(SB.tradable(r) for r in by_group[gk]):
+            stats["только «микро» — вне сравнения"] += 1  # цена там — котировка открытия; вызов был бы впустую
+            continue
         news_key = f"{gk[0]}|{gk[1]}"
         if news_key not in news:
             stats["нет кэша GDELT"] += 1
@@ -375,14 +382,16 @@ async def run_llm(a) -> int:
         rs = by_group[gk]
         ms = [markets[r["market"]] for r in rs]
         t = datetime.fromisoformat(rs[0]["t"])
-        dist, _ = dist_for(ms[0], t, st, cache)
-        view = L.GroupView(key=ms[0].key, t=t, titles=sorted({m.event_title for m in ms}), rule=ms[0].rule,
+        t_info = min(datetime.fromisoformat(r["t_info"]) for r in rs)  # момент цены рынка = граница информации
+        dist, _ = dist_for(ms[0], datetime.fromisoformat(rs[0]["t_info"]), st, cache)
+        arts = [x for x in news[news_key] if x.seen < t_info]
+        view = L.GroupView(key=ms[0].key, t=t_info, titles=sorted({m.event_title for m in ms}), rule=ms[0].rule,
                            baseline=baseline_text(ms[0], dist),
                            strikes=[(cond_text(m), r["p_quant"]) for m, r in zip(ms, rs)],
-                           news=gdelt.as_research(news[news_key], limit=15))
+                           news=gdelt.as_research(arts, limit=15))
         user = f"{SB.LEDGER_PREFIX}:{gk[0]}-{gk[1]}"
         t0 = time.time()
-        rec = {"group": gk[0], "point": gk[1], "t": t.isoformat(), "n_news": len(news[news_key])}
+        rec = {"group": gk[0], "point": gk[1], "t": t.isoformat(), "n_news": len(arts)}
         try:
             shift, vol, reason = await L.adjust(view, user)
         except L.BadAnswer as exc:

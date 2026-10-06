@@ -252,6 +252,8 @@ def _write_fixture(tmp_path, monkeypatch, p_mkt=0.3141):
         news.append({"key": f"{r['group']}|{r['point']}", "t": r["t"], "articles": [
             {"seen": (t - timedelta(hours=5)).isoformat(), "title": "ETF inflows surge", "url": "u", "domain": "d"},
             {"seen": (t + timedelta(hours=5)).isoformat(), "title": "BITCOIN CRASHES TOMORROW", "url": "u",
+             "domain": "d"},
+            {"seen": (t - timedelta(minutes=20)).isoformat(), "title": "FED SURPRISE AFTER MARKET PRICE", "url": "u",
              "domain": "d"}]})
     (tmp_path / "gdelt.jsonl").write_text("".join(json.dumps(x) + "\n" for x in {n["key"]: n for n in news}.values()))
     return R, ms, rows
@@ -280,6 +282,7 @@ def test_llm_through_guard_without_market_price_and_future_news(tmp_path, monkey
     for prompt in fake_llm.prompts:
         assert "0.3141" not in prompt and "31.4" not in prompt          # цены рынка LLM не видит
         assert "ETF inflows surge" in prompt and "CRASHES TOMORROW" not in prompt  # новости строго до t
+        assert "AFTER MARKET PRICE" not in prompt     # и не позже цены рынка, с которой идёт сравнение
     # каждый вызов — строка леджера приложения polymarket под pm2
     assert SB.stage_spent() > 0 and all(r["llm_calls"] == 1 for r in recs)
     for r in recs:
@@ -395,3 +398,37 @@ def test_llm_refuses_wrong_app(tmp_path, monkeypatch, fake_llm):
     with pytest.raises(RuntimeError, match="FORECAST_APP"):
         asyncio.run(R.run_llm(types.SimpleNamespace(limit=0, first_point="t48")))
     assert fake_llm.prompts == []
+
+
+def test_report_excludes_micro_from_comparison():
+    """Застывшая котировка (объём < $1k) не участвует в сравнении Brier — иначе «бьём» несуществующий рынок."""
+    rows = [_row(i, f"c{i % 4}", 0.1, 0.5, 0, volume=50.0, family="DXY") for i in range(8)]
+    rows += [_row(10 + i, f"d{i % 4}", 0.3, 0.3, i % 2, volume=5000.0, family="DXY") for i in range(8)]
+    out = SB.report(rows, boot=50)
+    assert "| DXY | t48 | 8 | 4 |" in out and "DXY t48 8" in out
+
+
+def test_quant_sees_series_only_up_to_market_price_time(tmp_path, monkeypatch):
+    """Цена рынка — последняя точка CLOB до t (на час–два раньше t). Бары между ней и t модели не видны:
+    иначе у quant лишняя информация против рынка, и «край» — артефакт."""
+    R, ms, rows = _write_fixture(tmp_path, monkeypatch)
+    for r in rows:
+        assert datetime.fromisoformat(r["t_info"]) < datetime.fromisoformat(r["t"])
+    cache = tmp_path / "cache" / "binance_BTCUSDT.json"
+    d = json.loads(cache.read_text())
+    r48 = next(r for r in rows if r["point"] == "t48")  # t50 раньше t48: порча (цена, t48] его не касается
+    t_info, t_max = (datetime.fromisoformat(r48[k]).timestamp() for k in ("t_info", "t"))
+    d["close"] = [c * (5 if t_info < a <= t_max else 1) for a, c in zip(d["avail"], d["close"])]
+    cache.write_text(json.dumps(d))
+    rows2, _ = R.quant_rows(R.load_markets(), R.store())
+    assert [r["p_quant"] for r in rows2] == [r["p_quant"] for r in rows]
+
+
+def test_load_news_drops_articles_at_or_after_t(tmp_path, monkeypatch):
+    R = _runner()
+    monkeypatch.setattr(SB, "data_dir", lambda: tmp_path)
+    t = datetime(2026, 9, 1, 16, tzinfo=UTC)
+    arts = [{"seen": (t + timedelta(minutes=m)).isoformat(), "title": f"a{m}", "url": "u", "domain": "d"}
+            for m in (-90, -1, 0, 30)]
+    (tmp_path / "gdelt.jsonl").write_text(json.dumps({"key": "g|t48", "t": t.isoformat(), "articles": arts}) + "\n")
+    assert [a.title for a in R.load_news()["g|t48"]] == ["a-90", "a-1"]
