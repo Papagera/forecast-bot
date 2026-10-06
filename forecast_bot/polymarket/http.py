@@ -9,11 +9,15 @@ from urllib.parse import urlparse
 import requests
 
 ALLOWED_HOSTS = {"gamma-api.polymarket.com", "clob.polymarket.com", "api.gdeltproject.org",
-                 "data.gdeltproject.org"}  # статические выгрузки GDELT (решение income 05.10.2026) — только GET
+                 "data.gdeltproject.org",  # статические выгрузки GDELT (решение income 05.10.2026) — только GET
+                 # бэктест №2 «ряды данных» (06.10.2026): источники резолва и прокси, только GET без ключей
+                 "api.binance.com", "query1.finance.yahoo.com", "home.treasury.gov", "alfred.stlouisfed.org"}
 # GDELT: «Please limit requests to one every 5 seconds» (ответ API 05.10.2026); на практике после нарушений штраф
 # дольше и продлевается повторами — держим 10 с между запросами.
-MIN_INTERVAL_S = {"api.gdeltproject.org": 10.0, "data.gdeltproject.org": 0.2, "gamma-api.polymarket.com": 0.3, "clob.polymarket.com": 0.3}
-UA = {"User-Agent": "forecast-bot research (read-only)"}
+MIN_INTERVAL_S = {"api.gdeltproject.org": 10.0, "data.gdeltproject.org": 0.2, "gamma-api.polymarket.com": 0.3, "clob.polymarket.com": 0.3,
+                  "api.binance.com": 0.3, "query1.finance.yahoo.com": 1.0, "home.treasury.gov": 1.0,
+                  "alfred.stlouisfed.org": 1.0}
+UA = {"User-Agent": "Mozilla/5.0 forecast-bot research (read-only)"}  # Yahoo без «Mozilla» отвечает 429
 RATE_BACKOFF_S = {"api.gdeltproject.org": 120.0}
 
 _last: dict[str, float] = {}
@@ -78,4 +82,22 @@ def get_json(url: str, params: Optional[dict] = None, *, retries: int = 4, timeo
         except (requests.RequestException, ValueError) as exc:
             last_exc = exc
             time.sleep(1.5 * (attempt + 1))
+    raise RuntimeError(f"GET {host} не удался после {retries} попыток: {last_exc}")
+
+
+def get_text(url: str, params: Optional[dict] = None, *, retries: int = 3, timeout: int = 60) -> str:
+    """GET текста (CSV Минфина США, ALFRED). Клиентская ошибка — без повторов."""
+    host = _check(url)
+    last_exc: Exception | None = None
+    for attempt in range(retries):
+        _wait(host)
+        try:
+            r = requests.get(url, params=params, headers=UA, timeout=timeout)
+            if 400 <= r.status_code < 500 and r.status_code != 429:
+                raise RuntimeError(f"GET {host}: {r.status_code} {r.reason}")
+            r.raise_for_status()
+            return r.text
+        except requests.RequestException as exc:
+            last_exc = exc
+            time.sleep(2.0 * (attempt + 1))
     raise RuntimeError(f"GET {host} не удался после {retries} попыток: {last_exc}")
