@@ -101,7 +101,9 @@ def test_cmd_a_selects_rules_on_train_only(tmp_path, monkeypatch):
 
 # ─────────────────────────── В ─────────────────────────────────────
 def _leg(p, outcome, vol=50_000.0, group="g", t0=1_000_000):
-    return {"history": [(t0, p)], "volume": vol, "fee_rate": 0.0, "outcome": outcome, "group": group}
+    """Живой ряд: цена менялась за сутки до окна (иначе это котировка пустого стакана)."""
+    return {"history": [(t0 - 3600, p + 0.01), (t0, p)], "volume": vol, "fee_rate": 0.0, "outcome": outcome,
+            "group": group}
 
 
 def test_negrisk_windows_sum_over_and_exhaustive_only():
@@ -175,3 +177,91 @@ def test_data_api_whitelisted():
     from forecast_bot.polymarket import http
 
     assert "data-api.polymarket.com" in http.ALLOWED_HOSTS
+
+
+# ─────────────────────────── Д и В+ (ИИ) ────────────────────────────
+def test_implication_windows():
+    a, b = dict(_leg(0.6, 0)), dict(_leg(0.4, 1))                     # P(a) > P(b), а «a ⇒ b»
+    w = X.implication_windows(a, b, [1_000_100], "a>b")
+    assert len(w) == 1 and w[0].kind == "implied" and w[0].edge == pytest.approx(0.2 - 2 * B.SPREAD["mid"] / 2)
+    assert X.implication_windows(dict(_leg(0.3, 0)), dict(_leg(0.5, 1)), [1_000_100], "x") == []
+
+
+def _text_market(i, end, cat="politics", event=None, q=None):
+    m = _market(f"t{i}", end, cat=cat, event=event or f"e{i}",
+                hist=[(int((end - timedelta(hours=h)).timestamp()), 0.05) for h in range(200, 0, -1)])
+    m.question = q or f"Will Zelensky meet Trump by September {i % 28 + 1}?"
+    m.description = "This market resolves YES only if the official White House schedule lists the meeting. " * 2
+    return m
+
+
+def _d_fixture(tmp_path, monkeypatch, fake_llm, answer):
+    from forecast_bot import ai_guard, guarded_llm
+
+    R = _runner()
+    monkeypatch.setattr(B, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(guarded_llm, "APP", "polymarket")
+    monkeypatch.setattr(fake_llm, "_answer", staticmethod(answer))
+    (tmp_path / "biases").mkdir()
+    ms = [_text_market(i, datetime(2026, 9, 10, tzinfo=UTC) + timedelta(hours=i)) for i in range(6)]
+    (tmp_path / "biases" / "markets.jsonl").write_text("".join(m.to_json() + "\n" for m in ms))
+    return R, ms, ai_guard
+
+
+def test_d_labels_through_guard_and_caps(tmp_path, monkeypatch, fake_llm, capsys):
+    import asyncio
+    import types
+
+    R, ms, ai_guard = _d_fixture(tmp_path, monkeypatch, fake_llm,
+                                 lambda t: '{"trap": true, "kind": "source", "direction": "harder", "reason": "r"}')
+    monkeypatch.setattr(R, "STAGE4_START", datetime(2026, 1, 1, tzinfo=UTC))  # тест не зависит от часов
+    asyncio.run(R._run_d(types.SimpleNamespace(n=10)))
+    labs = [json.loads(l) for l in (tmp_path / "biases" / "d_labels.jsonl").read_text().splitlines()]
+    assert len(labs) == 6 and all(l["trap"] and l["direction"] == "harder" for l in labs)
+    assert R.stage_spent(":d") > 0 and R.stage_spent(":c2") == 0           # учёт в леджере под pm4:d
+    conn = ai_guard._conn()
+    conn.execute('INSERT INTO usage VALUES (?,?,?,?,?,?,?)',
+                 (R.STAGE4_START.timestamp() + 60, "openrouter", "m", "polymarket:pm4:d:x", 0, 0, 1.0))
+    conn.commit(); conn.close()
+    (tmp_path / "biases" / "d_labels.jsonl").unlink()
+    n_before = len(fake_llm.prompts)
+    asyncio.run(R._run_d(types.SimpleNamespace(n=10)))
+    assert len(fake_llm.prompts) == n_before                              # потолок Д $1 — ни одного вызова
+    assert "потолок Д / этапа — стоп" in capsys.readouterr().out          # стоп именно по потолку, явно
+
+
+def test_stage4_cap_counts_only_pm4(tmp_path, monkeypatch):
+    from forecast_bot import ai_guard
+
+    R = _runner()
+    conn = ai_guard._conn()
+    for user, cost in (("polymarket:pm3:1-t48-tg", 14.0), ("polymarket:pm4:c2:1", 0.5)):
+        conn.execute('INSERT INTO usage VALUES (?,?,?,?,?,?,?)',
+                     (R.STAGE4_START.timestamp() + 60, "openrouter", "m", user, 0, 0, cost))
+    conn.commit(); conn.close()
+    assert R.stage_spent() == pytest.approx(0.5) and R.stage_spent(":c2") == pytest.approx(0.5)
+
+
+def test_c2_groups_distinct_events_same_month():
+    R = _runner()
+    end = datetime(2026, 9, 10, tzinfo=UTC)
+    ms = [_text_market(i, end, event="same") for i in range(5)]             # одно событие — не группа
+    ms += [_text_market(10 + i, end) for i in range(4)]
+    ms += [_text_market(20, end, cat="sports")]
+    gs = R.c2_groups(ms, 10)
+    assert gs and all(len({m.event_id for m in g}) == len(g) and all(m.cls != "sports" for m in g) for g in gs)
+
+
+def test_frozen_quotes_are_not_arbitrage():
+    """Все исходы матча стоят по 0.50 неделю — сумма 1.5, но это пустой стакан, а не цены."""
+    frozen = [{"history": [(1_000_000 - k * 3600, 0.5) for k in range(30)], "volume": 50_000.0, "fee_rate": 0.0,
+               "outcome": int(i == 0), "group": "g"} for i in range(3)]
+    assert X.negrisk_windows(frozen, [1_000_100]) == []
+    assert X.active_price([(1_000_000 - 7200, 0.4), (1_000_000, 0.45)], 1_000_100) == 0.45
+
+
+def test_trade_price_windows_need_recent_trades_on_every_leg():
+    legs = [{"history": [(1_000_000, 0.5)], "volume": 50_000.0, "fee_rate": 0.0, "outcome": 1, "group": "g"},
+            {"history": [(1_000_000, 0.6)], "volume": 50_000.0, "fee_rate": 0.0, "outcome": 0, "group": "g"}]
+    assert len(X.negrisk_windows(legs, [1_000_100], price=X.trade_price)) == 1
+    assert X.negrisk_windows(legs, [1_000_000 + 3 * 3600], price=X.trade_price) == []   # сделки старше 2 ч

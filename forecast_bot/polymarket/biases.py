@@ -112,6 +112,19 @@ def price_at(history: list[tuple[int, float]], ts: float, max_age_s: float = 3 *
     return prev[-1][1]
 
 
+ACTIVE_LOOKBACK_S = 24 * 3600
+
+
+def active_price(history: list[tuple[int, float]], ts: float, max_age_s: float = 3 * 3600) -> Optional[float]:
+    """Цена, только если ряд «живой»: за 24 ч до ts она менялась. Иначе это котировка пустого стакана (у спорта за
+    неделю до матча все исходы стоят ~0.50 — сумма 1.4 выглядела бы «арбитражем»)."""
+    p = price_at(history, ts, max_age_s)
+    if p is None:
+        return None
+    recent = {round(q, 4) for t, q in history if ts - ACTIVE_LOOKBACK_S <= t <= ts}
+    return p if len(recent) >= 2 else None
+
+
 def leg_cost(p: float, volume: float, fee_rate: float) -> Optional[float]:
     """Издержки одной ноги на долю: полспреда сегмента + taker fee. Микро — неисполнимо."""
     seg = B.segment(volume)
@@ -131,14 +144,19 @@ class Window:
     min_volume: float
 
 
-def negrisk_windows(members: list[dict], hours: Iterable[int]) -> list[Window]:
+def trade_price(history: list[tuple[int, float]], ts: float) -> Optional[float]:
+    """Цена последней РЕАЛЬНОЙ сделки не старше 2 ч (история — сделки data-api, а не середина CLOB)."""
+    return price_at(history, ts, 2 * 3600)
+
+
+def negrisk_windows(members: list[dict], hours: Iterable[int], price: Callable = active_price) -> list[Window]:
     """members: [{history, volume, fee_rate, outcome}] — ВСЕ исходы группы (ровно один «Да»).
     Сумма S > 1: купить NO всех → гарантировано n−1, прибыль S − 1 − издержки. S < 1: YES всех → 1 − S − издержки."""
     if len(members) < 2 or sum(m["outcome"] for m in members) != 1:
         return []  # список исходов неполный или не взаимоисключающий — это не арбитраж
     out = []
     for h in hours:
-        ps = [price_at(m["history"], h) for m in members]
+        ps = [price(m["history"], h) for m in members]
         if any(p is None for p in ps):
             continue
         costs = []
@@ -174,7 +192,7 @@ def ladder_date(item: str, question: str, year: int) -> Optional[datetime]:
     return datetime(int(m.group(3) or year), _MON[m.group(1).lower()], int(m.group(2)), tzinfo=UTC)
 
 
-def ladder_windows(steps: list[dict], hours: Iterable[int]) -> list[Window]:
+def ladder_windows(steps: list[dict], hours: Iterable[int], price: Callable = active_price) -> list[Window]:
     """steps: [{date, history, volume, fee_rate}] одной лестницы. Нарушение: P(к d1) > P(к d2) при d1 < d2.
     Купить YES(d2) и NO(d1): выплата ≥ 1 в любом исходе, прибыль ≥ p1 − p2 − издержки."""
     steps = sorted(steps, key=lambda s: s["date"])
@@ -183,7 +201,7 @@ def ladder_windows(steps: list[dict], hours: Iterable[int]) -> list[Window]:
         for a in range(len(steps)):
             for b in range(a + 1, len(steps)):
                 s1, s2 = steps[a], steps[b]
-                p1, p2 = price_at(s1["history"], h), price_at(s2["history"], h)
+                p1, p2 = price(s1["history"], h), price(s2["history"], h)
                 if p1 is None or p2 is None:
                     continue
                 c1, c2 = leg_cost(1 - p1, s1["volume"], s1["fee_rate"]), leg_cost(p2, s2["volume"], s2["fee_rate"])
@@ -192,6 +210,22 @@ def ladder_windows(steps: list[dict], hours: Iterable[int]) -> list[Window]:
                 edge = p1 - p2 - c1 - c2
                 if edge > 0:
                     out.append(Window("ladder", s1["group"], h, edge, 2, min(s1["volume"], s2["volume"])))
+    return out
+
+
+def implication_windows(a: dict, b: dict, hours: Iterable[int], group: str) -> list[Window]:
+    """«Да(a) ⇒ Да(b)» (связь нашёл ИИ по тексту). Нарушение P(a) > P(b): купить NO(a) и YES(b) — выплата ≥ 1."""
+    out = []
+    for h in hours:
+        pa, pb = active_price(a["history"], h), active_price(b["history"], h)
+        if pa is None or pb is None:
+            continue
+        ca, cb = leg_cost(1 - pa, a["volume"], a["fee_rate"]), leg_cost(pb, b["volume"], b["fee_rate"])
+        if ca is None or cb is None:
+            continue
+        edge = pa - pb - ca - cb
+        if edge > 0:
+            out.append(Window("implied", group, h, edge, 2, min(a["volume"], b["volume"])))
     return out
 
 

@@ -5,11 +5,18 @@
     .venv/bin/python tools/polymarket_biases.py c          # В: negRisk-суммы и лестницы «к дате»
     .venv/bin/python tools/polymarket_biases.py b          # Б: пост в папке → минутная цена рынка
     .venv/bin/python tools/polymarket_biases.py g          # Г: котировки внутри спреда по истории сделок
+    .venv/bin/python tools/polymarket_biases.py d          # Д: ИИ читает правила — ловушки закрытия (≤ $1)
+    .venv/bin/python tools/polymarket_biases.py c2         # В+: связи между рынками находит ИИ по тексту (≤ $1)
     .venv/bin/python tools/polymarket_biases.py report [--out файл.md]
 
-Данные — ~/.forecast-bot/polymarket/biases/ (вне репо). ИИ не вызывается.
+Данные — ~/.forecast-bot/polymarket/biases/ (вне репо). ИИ — только Д и В+: дешёвая модель через ai_guard,
+приложение `polymarket`, пользователи `pm4:*`, потолок этапа $3; суточный лимит приложения НЕ поднимается.
 """
 from __future__ import annotations
+
+import os
+
+os.environ["FORECAST_APP"] = "polymarket"  # ДО импорта forecast_bot: потолок приложения читается при импорте
 
 import argparse
 import json
@@ -269,7 +276,51 @@ def cmd_c(_a) -> int:
     ws = X.dedupe_windows(windows)
     write_jsonl(d() / "c_windows.jsonl", [w.__dict__ for w in ws])
     print(f"окон после склейки: {len(ws)}; по типам: {dict(Counter(w.kind for w in ws))}")
+    # Проверка по РЕАЛЬНЫМ сделкам: середина CLOB у неликвидных исходов — котировка пустого стакана. Для событий с
+    # окнами качаем сделки всех ног и пересчитываем окна по цене последней сделки (не старше 2 ч).
+    verified = []
+    for ev in load_jsonl(cache_p):
+        if ev["id"] not in {w.group for w in ws}:
+            continue
+        legs = [S.SeriesMarket.from_json(json.dumps(x)) for x in ev["legs"]]
+        for m in legs:
+            m.history = trade_series(m)
+        lo, hi = max(m.start for m in legs), min(m.closed for m in legs)
+        hours = list(range(int(lo.timestamp()) // 3600 * 3600 + 3600, int(hi.timestamp()), 3600))
+        if ev["kind"] == "neg":
+            mem = [{"history": m.history, "volume": m.volume, "fee_rate": m.fee_rate, "outcome": m.outcome,
+                    "group": ev["id"]} for m in legs]
+            verified += [w for w in X.negrisk_windows(mem, hours, price=X.trade_price)]
+        else:
+            steps = [{"date": dt, "history": m.history, "volume": m.volume, "fee_rate": m.fee_rate, "group": ev["id"]}
+                     for m in legs if (dt := X.ladder_date(m.rule, m.question, m.end_planned.year))]
+            verified += X.ladder_windows(steps, hours, price=X.trade_price)
+    vs = X.dedupe_windows(verified)
+    write_jsonl(d() / "c_windows_trades.jsonl", [w.__dict__ for w in vs])
+    print(f"по реальным сделкам: {len(vs)}; по типам: {dict(Counter(w.kind for w in vs))}")
     return 0
+
+
+def trade_series(m) -> list[tuple[int, float]]:
+    """Цена «Да» по сделкам data-api (кэш на рынок; кошельки не сохраняются)."""
+    p = d() / "trades" / f"{m.id}.json"
+    if p.exists():
+        return [tuple(x) for x in json.loads(p.read_text())]
+    p.parent.mkdir(exist_ok=True)
+    meta = get_json(f"https://gamma-api.polymarket.com/markets/{m.id}")
+    out = []
+    for off in range(0, 10_000, 500):
+        try:
+            page = get_json("https://data-api.polymarket.com/trades", {"market": meta.get("conditionId"), "limit": 500,
+                                                                       "offset": off})
+        except RuntimeError:
+            break
+        out += [(v[0], v[2]) for t in page if (v := X.yes_view(t, m.yes_token))]
+        if len(page) < 500:
+            break
+    out.sort()
+    p.write_text(json.dumps(out))
+    return out
 
 
 def c_report() -> list[str]:
@@ -374,6 +425,207 @@ def b_report(boot: int) -> list[str]:
                 out.append(f"| {kind}: {label} | {per} | {v['trades']} | {v['events']} | {_pct(v['roi'])} | "
                            f"{_ci(v['ci'])} |")
     return out
+
+
+# ─────────────────────────── ИИ этапа 4 (Д, В+) ─────────────────────
+STAGE4_START = datetime(2026, 10, 6, 21, tzinfo=UTC)  # 07.10.2026 00:00 по Киеву
+STAGE4_CAP_USD = 3.0
+D_CAP_USD = 1.0
+C2_CAP_USD = 1.0
+LEDGER_PREFIX = "pm4"
+AI_MODEL = "openrouter/anthropic/claude-haiku-4.5"
+TEXT_CATS = {"politics", "culture", "geopolitics", "mentions", "tech", "economics", "finance", "none", "other"}
+
+
+def stage_spent(part: str = "") -> float:
+    from forecast_bot import ai_guard
+
+    return ai_guard.app_cost_since(f"{B.APP}:{LEDGER_PREFIX}{part}", STAGE4_START.timestamp())
+
+
+async def _ask(user: str, prompt: str, max_tokens: int) -> str:
+    from forecast_bot import guarded_llm
+
+    if guarded_llm.APP != B.APP:
+        raise RuntimeError(f"guarded_llm.APP={guarded_llm.APP!r}, нужен {B.APP!r}")
+    guarded_llm.install_sentinel()
+    token = guarded_llm.CURRENT_USER.set(user)
+    try:
+        resp = await guarded_llm.guarded_completion(AI_MODEL, [{"role": "user", "content": prompt}],
+                                                    max_tokens=max_tokens, temperature=0)
+    finally:
+        guarded_llm.CURRENT_USER.reset(token)
+    return resp.choices[0].message.content or ""
+
+
+def _json_tail(text: str):
+    import re
+
+    found = re.findall(r"[\[{].*[\]}]", text or "", re.S)
+    return json.loads(found[-1]) if found else None
+
+
+D_PROMPT = """Prediction market question: {q}
+Resolution rules: {rules}
+
+Is there a resolution TRAP: the market resolves by a narrow source, exact time window, specific wording or
+technicality, so a trader reading only the title could misjudge the outcome?
+Answer JSON only: {{"trap": true|false, "kind": "source|time|wording|none",
+"direction": "harder|easier|neutral", "reason": "one short sentence"}}
+direction = does the rule make YES HARDER or EASIER than the title alone suggests. Do not guess the outcome."""
+
+
+def d_sample(markets: list[S.SeriesMarket], n: int) -> list[S.SeriesMarket]:
+    pool = [m for m in markets if m.cls in TEXT_CATS and X.period(m.end_planned) and len(m.description) > 80]
+    return sorted(pool, key=lambda m: X.sample_rank(m.id))[:n]
+
+
+async def _run_d(a) -> int:
+    from forecast_bot import ai_guard, guarded_llm
+
+    guarded_llm.start_run(max(0.0, min(D_CAP_USD - stage_spent(":d"), STAGE4_CAP_USD - stage_spent())))
+    path = d() / "d_labels.jsonl"
+    done = {r["market"] for r in load_jsonl(path)}
+    n_ok = 0
+    with path.open("a") as fh:
+        for m in d_sample(load_markets(), a.n):
+            if m.id in done:
+                continue
+            if stage_spent(":d") >= D_CAP_USD or stage_spent() >= STAGE4_CAP_USD:
+                print("потолок Д / этапа — стоп")
+                break
+            try:
+                text = await _ask(f"{LEDGER_PREFIX}:d:{m.id}", D_PROMPT.format(q=m.question, rules=m.description[:1500]),
+                                  200)
+                lab = _json_tail(text)
+                rec = {"market": m.id, "trap": bool(lab.get("trap")), "kind": str(lab.get("kind", "")),
+                       "direction": str(lab.get("direction", "")), "reason": str(lab.get("reason", ""))[:200]}
+            except ai_guard.BudgetExceeded as exc:
+                print(f"лимит ai_guard — стоп: {exc}")
+                break
+            except Exception as exc:
+                rec = {"market": m.id, "error": f"{type(exc).__name__}: {str(exc)[:120]}"}
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            n_ok += "error" not in rec
+    print(f"размечено {n_ok}; потрачено на Д ${stage_spent(':d'):.3f}, на этап ${stage_spent():.3f}")
+    return 0
+
+
+def d_report(boot: int) -> list[str]:
+    labels = {r["market"]: r for r in load_jsonl(d() / "d_labels.jsonl") if "error" not in r}
+    rows = [r for r in load_jsonl(d() / "a_rows.jsonl") if r["market"] in labels]
+    out = ["### Д. Ловушки правил закрытия (ИИ размечает правила; цена — CLOB, ≥ $1k)", "",
+           f"Размечено рынков: {len(labels)}, из них «ловушка»: {sum(1 for v in labels.values() if v['trap'])} "
+           f"({Counter(v['kind'] for v in labels.values() if v['trap']).most_common()}).", "",
+           "| группа | срок | n | событий | средняя |цена − исход| |", "|---|---|---|---|---|"]
+    for trap in (True, False):
+        for h in X.HORIZONS_H:
+            rs = [r for r in rows if labels[r["market"]]["trap"] is trap and r["horizon"] == h]
+            if rs:
+                err = sum(abs(r["p_mkt"] - r["outcome"]) for r in rs) / len(rs)
+                out.append(f"| {'ловушка' if trap else 'обычный'} | {h} ч | {len(rs)} | "
+                           f"{len({r['cluster'] for r in rs})} | {err:.3f} |")
+    out += ["", "| правило (ловушка: «труднее» → NO, «легче» → YES) | срок | период | сделок | событий | ROI | 90% |",
+            "|---|---|---|---|---|---|---|"]
+    for h in (24, 72):
+        for per in ("train", "test"):
+            pairs = []
+            for r in rows:
+                lab = labels[r["market"]]
+                if not lab["trap"] or lab["direction"] not in ("harder", "easier") or r["horizon"] != h or \
+                        r["period"] != per:
+                    continue
+                t = X.rule_trade(r, "no" if lab["direction"] == "harder" else "yes")
+                if t:
+                    pairs.append((r, t))
+            v = X.verdict(pairs, boot)
+            out.append(f"| ловушка → по правилу | {h} ч | {'июль–август' if per == 'train' else 'сентябрь'} | "
+                       f"{v['trades']} | {v['events']} | {_pct(v['roi'])} | {_ci(v['ci'])} |")
+    return out
+
+
+C2_PROMPT = """Below are prediction markets on related topics (index: question).
+{items}
+
+List pairs where YES on market i LOGICALLY IMPLIES YES on market j (if i resolves YES, j must resolve YES),
+e.g. "X wins by 10+ points" ⇒ "X wins"; "happens by Aug 31" ⇒ "happens by Sep 30"; "candidate of party P wins" ⇒
+"party P wins". Only strict logical implications given the question texts, not likely correlations.
+Answer JSON only: [[i, j], ...] or []."""
+
+_STOP = {"Will", "Which", "What", "Who", "When", "How", "The", "Yes", "January", "February", "March", "April", "May",
+         "June", "July", "August", "September", "October", "November", "December", "Monday", "Tuesday",
+         "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "Week", "Election", "Price", "Market"}
+
+
+def c2_groups(markets: list[S.SeriesMarket], max_groups: int, size: tuple[int, int] = (3, 20)) -> list[list]:
+    """Группы по общему собственному имени (≥ 4 букв) внутри месяца конца; каждая — до 20 рынков, РАЗНЫЕ события."""
+    import re
+
+    by = defaultdict(dict)
+    for m in markets:
+        if m.cls not in TEXT_CATS:
+            continue
+        for w in set(re.findall(r"\b[A-Z][a-zA-Z]{3,}\b", m.question)) - _STOP:
+            by[(w, m.end_planned.strftime("%Y-%m"))].setdefault(m.event_id or m.id, m)
+    groups = []
+    for k in sorted(by, key=lambda k: X.sample_rank("|".join(k))):
+        ms = list(by[k].values())
+        if size[0] <= len(ms) <= size[1]:
+            groups.append(ms)
+        if len(groups) >= max_groups:
+            break
+    return groups
+
+
+async def _run_c2(a) -> int:
+    from forecast_bot import ai_guard, guarded_llm
+
+    guarded_llm.start_run(max(0.0, min(C2_CAP_USD - stage_spent(":c2"), STAGE4_CAP_USD - stage_spent())))
+    path = d() / "c2_pairs.jsonl"
+    done = {r["group"] for r in load_jsonl(path)}
+    with path.open("a") as fh:
+        for ms in c2_groups(load_markets(), a.groups):
+            gid = "|".join(sorted(m.id for m in ms))
+            if gid in done:
+                continue
+            if stage_spent(":c2") >= C2_CAP_USD or stage_spent() >= STAGE4_CAP_USD:
+                print("потолок В+ / этапа — стоп")
+                break
+            items = "\n".join(f"{i}: {m.question}" for i, m in enumerate(ms))
+            try:
+                pairs = _json_tail(await _ask(f"{LEDGER_PREFIX}:c2:{X.sample_rank(gid)}", C2_PROMPT.format(items=items),
+                                              300)) or []
+                pairs = [(ms[i].id, ms[j].id) for i, j in pairs if 0 <= i < len(ms) and 0 <= j < len(ms) and i != j]
+                rec = {"group": gid, "pairs": pairs}
+            except ai_guard.BudgetExceeded as exc:
+                print(f"лимит ai_guard — стоп: {exc}")
+                break
+            except Exception as exc:
+                rec = {"group": gid, "error": f"{type(exc).__name__}: {str(exc)[:120]}"}
+            fh.write(json.dumps(rec) + "\n")
+    print(f"групп {len(load_jsonl(path))}; потрачено на В+ ${stage_spent(':c2'):.3f}, на этап ${stage_spent():.3f}")
+    return 0
+
+
+def c2_report() -> list[str]:
+    by_id = {m.id: m for m in load_markets()}
+    recs = [r for r in load_jsonl(d() / "c2_pairs.jsonl") if "error" not in r]
+    pairs = [(a, b) for r in recs for a, b in r["pairs"] if a in by_id and b in by_id]
+    wrong = sum(1 for a, b in pairs if by_id[a].outcome == 1 and by_id[b].outcome == 0)
+    ws = []
+    for a, b in pairs:
+        ma, mb = by_id[a], by_id[b]
+        lo, hi = max(ma.start, mb.start), min(ma.closed, mb.closed)
+        hours = range(int(lo.timestamp()) // 3600 * 3600 + 3600, int(hi.timestamp()), 3600)
+        legs = [{"history": m.history, "volume": m.volume, "fee_rate": m.fee_rate} for m in (ma, mb)]
+        ws += X.implication_windows(legs[0], legs[1], hours, f"{a}>{b}")
+    ws = X.dedupe_windows(ws)
+    e = sorted(w.edge for w in ws)
+    return ["### В+. Связи между разными событиями, найденные ИИ по тексту", "",
+            f"Групп проверено {len(recs)}, пар «Да(i) ⇒ Да(j)» {len(pairs)}; ИИ ошибся в {wrong} "
+            f"(i сыграл, j нет — связь ложная, окно по ней было бы убытком).",
+            f"Окон P(i) > P(j) + издержки: {len(ws)} (пар {len({w.group for w in ws})}); медиана прибыли "
+            f"{e[len(e) // 2]:.3f} на комплект." if ws else "Окон P(i) > P(j) + издержки: 0."]
 
 
 # ─────────────────────────── Г ─────────────────────────────────────
@@ -485,8 +737,8 @@ def g_report(boot: int) -> list[str]:
 
 def cmd_report(a) -> int:
     parts = []
-    for name, fn in (("А", lambda: a_report(a.boot)), ("В", c_report), ("Б", lambda: b_report(a.boot)),
-                     ("Г", lambda: g_report(a.boot))):
+    for name, fn in (("А", lambda: a_report(a.boot)), ("В", c_report), ("В+", c2_report),
+                     ("Б", lambda: b_report(a.boot)), ("Г", lambda: g_report(a.boot)), ("Д", lambda: d_report(a.boot))):
         try:
             parts += fn() + [""]
         except FileNotFoundError:
@@ -503,10 +755,18 @@ def main() -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     for c in ("select", "a", "c", "b", "g"):
         sub.add_parser(c)
+    dd = sub.add_parser("d")
+    dd.add_argument("--n", type=int, default=700)
+    cc = sub.add_parser("c2")
+    cc.add_argument("--groups", type=int, default=150)
     r = sub.add_parser("report")
     r.add_argument("--out", default="")
     r.add_argument("--boot", type=int, default=SB.BOOT)
     a = ap.parse_args()
+    if a.cmd in ("d", "c2"):
+        import asyncio
+
+        return asyncio.run(_run_d(a) if a.cmd == "d" else _run_c2(a))
     return {"select": cmd_select, "a": cmd_a, "c": cmd_c, "b": cmd_b, "g": cmd_g, "report": cmd_report}[a.cmd](a)
 
 

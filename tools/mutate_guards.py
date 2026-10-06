@@ -362,6 +362,21 @@ SOURCE_MUTATIONS = {
     "pm4: Г — сделка по «Нет» не зеркалится": (
         "forecast_bot.polymarket.biases", "    if str(trade.get(\"asset\")) != str(yes_token):", "    if False:",
         "tests/test_polymarket_biases.py::test_yes_view_mirrors_no_token"),
+    "pm4: Д — потолок не проверяется": (
+        "tools.polymarket_biases", '            if stage_spent(":d") >= D_CAP_USD or stage_spent() >= STAGE4_CAP_USD:',
+        "            if False:", "tests/test_polymarket_biases.py::test_d_labels_through_guard_and_caps"),
+    "pm4: потолок этапа считает чужие траты": (
+        "tools.polymarket_biases", 'return ai_guard.app_cost_since(f"{B.APP}:{LEDGER_PREFIX}{part}"',
+        "return ai_guard.app_cost_since(B.APP", "tests/test_polymarket_biases.py::test_stage4_cap_counts_only_pm4"),
+    "pm4: В+ — издержки ног не вычитаются": (
+        "forecast_bot.polymarket.biases", "        edge = pa - pb - ca - cb", "        edge = pa - pb",
+        "tests/test_polymarket_biases.py::test_implication_windows"),
+    "pm4: В+ — группа из одного события": (
+        "tools.polymarket_biases", "by[(w, m.end_planned.strftime(\"%Y-%m\"))].setdefault(m.event_id or m.id, m)",
+        "by[(w, m.end_planned.strftime(\"%Y-%m\"))].setdefault(m.id, m)", "tests/test_polymarket_biases.py::test_c2_groups_distinct_events_same_month"),
+    "pm4: В — застывшая котировка пустого стакана как цена": (
+        "forecast_bot.polymarket.biases", "    return p if len(recent) >= 2 else None", "    return p",
+        "tests/test_polymarket_biases.py::test_frozen_quotes_are_not_arbitrage"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),
