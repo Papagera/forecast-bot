@@ -192,6 +192,15 @@ SOURCE_MUTATIONS = {
         "forecast_bot.bot", 'return os.environ.get("FORECAST_SEARCH", "web").strip() or "web"',
         'return os.environ.get("FORECAST_SEARCH", "asknews").strip() or "asknews"',
         "tests/test_websearch.py::test_web_is_default_search_and_asknews_needs_flag"),
+    "402: пустой кошелёк не останавливает опрос": (
+        "forecast_bot.run", 'if is_credit_error(row["error"]):', "if False:",
+        "tests/test_credits.py::test_credit_error_stops_poll_loudly_and_sends_nothing"),
+    "402: строка цикла молчит про ошибки вопросов": (
+        "forecast_bot.run", 'stats.question_errors += res.count("error")', "pass",
+        "tests/test_credits.py::test_loop_line_shows_question_errors_and_credit_alarm"),
+    "402: итог запуска без красной строки": (
+        "forecast_bot.summary", 'credit = sum(1 for r in errors if is_credit_error(r["error"] or ""))', "credit = 0",
+        "tests/test_credits.py::test_summary_flags_credit_errors"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),

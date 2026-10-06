@@ -279,6 +279,13 @@ async def run(
                 row = dict(base, status=J.ERROR, error=f"{type(report).__name__}: {report}"[:2000])
                 journal.record(**row)
                 result.rows.append(row)
+                if is_credit_error(row["error"]):
+                    # Кошелёк OpenRouter пуст: остальные вопросы опроса упадут так же. Опрос стоп без ретраев,
+                    # следующий — по расписанию (отказ 402 бесплатный). Сигнал — в лог и в итог запуска.
+                    logger.error("🔴 OpenRouter: кредиты исчерпаны (402) — опрос остановлен, ничего не отправлено")
+                    result.stopped_reason = CREDITS_STOP
+                    return result
+                logger.warning("вопрос %s: ошибка %s", qid, row["error"][:300])
                 continue
 
             if guarded_llm.UNGUARDED_ATTEMPTS or guarded_calls != ledger_calls:
@@ -304,6 +311,18 @@ async def run(
     return result
 
 
+CREDITS_STOP = "OpenRouter: кредиты исчерпаны (402)"
+_CREDIT_MARKERS = ("exceed your available credits", "insufficient credits", "in_flight_budget_exhausted",
+                   '"code":402', "'code': 402")
+
+
+def is_credit_error(text: str) -> bool:
+    """402 OpenRouter: пустой кошелёк или исчерпан in-flight бюджет (живьём 06.10.2026:
+    `{"error":{"message":"This request would exceed your available credits …","code":402, …in_flight_budget_exhausted}}`)."""
+    low = (text or "").lower()
+    return any(m.lower() in low for m in _CREDIT_MARKERS)
+
+
 @dataclass
 class LoopStats:
     started_at: float
@@ -314,12 +333,17 @@ class LoopStats:
     forecasts: int = 0              # строк ok за цикл
     last_found_at: Optional[float] = None   # когда в последний раз нашёлся новый вопрос
     stop_reasons: list[str] = field(default_factory=list)
+    question_errors: int = 0        # строк error (вопрос не спрогнозирован) — раньше в строке цикла не было видно
+    credit_stops: int = 0           # опросов, остановленных пустым кошельком OpenRouter
 
     def line(self) -> str:
         last = (dt.datetime.fromtimestamp(self.last_found_at, dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
                 if self.last_found_at else "—")
-        return (f"Цикл: опросов {self.polls}, пропущено по суточному потолку {self.skipped_day_cap}, "
-                f"ошибок {self.errors}, прогнозов {self.forecasts}, последний найденный вопрос {last}")
+        alarm = (f"🔴 OpenRouter без кредитов: остановлено опросов {self.credit_stops}, прогнозы не идут. "
+                 if self.credit_stops else "")
+        return (f"{alarm}Цикл: опросов {self.polls}, пропущено по суточному потолку {self.skipped_day_cap}, "
+                f"упавших опросов {self.errors}, ошибок по вопросам {self.question_errors}, "
+                f"прогнозов {self.forecasts}, последний найденный вопрос {last}")
 
     def save(self, path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -353,9 +377,12 @@ async def poll_loop(*, run_once, duration_s: float, poll_s: float, run_budget: O
                 res = await run_once()
                 ok = res.count("ok")
                 stats.forecasts += ok
+                stats.question_errors += res.count("error")
+                if res.stopped_reason == CREDITS_STOP:
+                    stats.credit_stops += 1
                 if res.rows:
                     stats.last_found_at = clock()
-                if res.stopped_reason:
+                if res.stopped_reason and res.stopped_reason not in stats.stop_reasons[-1:]:
                     stats.stop_reasons.append(res.stopped_reason)
             except Exception as exc:  # сеть/API — не повод бросать цикл
                 stats.errors += 1
