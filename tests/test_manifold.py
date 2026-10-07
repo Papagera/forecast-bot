@@ -106,6 +106,16 @@ def test_forecast_skips_flagged_and_unchecked_and_stops_at_cap(tmp_path, monkeyp
     from forecast_bot import ai_guard, guarded_llm, paths
 
     monkeypatch.setattr(guarded_llm, "APP", "forecast-lab")
+    # _forecast ставит окружение боевого пути — monkeypatch вернёт его после теста (иначе протечёт в test_run)
+    for k in ("FORECAST_RESEARCH", "FORECAST_SEARCH", "FORECAST_AGENT_MODEL", "FORECAST_AGENT_MAX_NEWS",
+              "FORECAST_MODEL", "FORECAST_REASONING", "FORECAST_PREDICTIONS", "FORECAST_ASOF"):
+        monkeypatch.setenv(k, "")
+    from forecast_bot import ai_guard as _ag
+
+    monkeypatch.setitem(_ag.LIMITS, "per_user_day_calls", _ag.LIMITS["per_user_day_calls"])
+    import metac_template_main as tm
+
+    monkeypatch.setattr(tm, "datetime", tm.datetime)  # _freeze_template_date подменяет его глобально
     mk = tmp_path / "manifold"
     monkeypatch.setattr(R, "d", lambda: mk)
     mk.mkdir()
