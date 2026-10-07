@@ -168,7 +168,7 @@ def test_workflow_gates_and_limits():
 
     wf = yaml.safe_load((Path(__file__).resolve().parent.parent / ".github/workflows/forecast.yml").read_text())
     job = wf["jobs"]["forecast"]
-    assert job["if"] == "vars.FORECAST_SUBMIT == '1'" and job["timeout-minutes"] == 350
+    assert job["if"] == "vars.FORECAST_SUBMIT == '1'" and job["timeout-minutes"] == 360
     assert wf["concurrency"] == {"group": "forecast", "cancel-in-progress": False}
     assert wf["permissions"] == {"contents": "read", "actions": "write"}
     on = wf[True] if True in wf else wf["on"]  # YAML 1.1 читает ключ on как True
@@ -179,12 +179,14 @@ def test_workflow_gates_and_limits():
                  "--quant-hints", "--research agent",
                  "--agent-model openrouter/google/gemini-3.8-flash", "--agent-max-news 2",
                  "--model openrouter/anthropic/claude-opus-5.5", "--reasoning high", "--predictions 1",
-                 "--run-budget 1.0", "--loop-minutes 335", "--poll-minutes 10"):
+                 "--run-budget 1.0", "--loop-minutes 325", "--poll-minutes 10"):
         assert part in cmd
-    # окно цикла + запас на последний вопрос + подготовка job укладываются в timeout
-    assert 335 + R.LOOP_GRACE_S / 60 + 2 + 3 < job["timeout-minutes"] <= 360
+    # окно цикла + запас на последний вопрос + подготовка job + все повторы перезапуска укладываются в timeout
+    from forecast_bot import restart as RS
+
+    assert 325 + R.LOOP_GRACE_S / 60 + 2 + 3 + RS.MAX_WAIT_S / 60 < job["timeout-minutes"] <= 360
     restart = steps["Перезапустить цикл"]
-    assert restart["if"] == "success() || failure()" and "gh workflow run forecast.yml" in restart["run"]
+    assert restart["if"] == "success() || failure()" and "python -m forecast_bot.restart" in restart["run"]
     assert restart["env"]["GH_TOKEN"] == "${{ secrets.GITHUB_TOKEN }}"
     names = [s.get("name") for s in job["steps"]]
     assert names.index("Сохранить состояние") < names.index("Перезапустить цикл")

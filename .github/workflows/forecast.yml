@@ -1,4 +1,4 @@
-# Боевой бот: один job крутит цикл опроса ~5 ч 35 мин (каждые 10 мин), в конце перезапускает сам себя.
+# Боевой бот: один job крутит цикл опроса ~5 ч 25 мин (каждые 10 мин), в конце перезапускает сам себя.
 # Почему так: окно приёма прогноза в турнирах — 3 ч, а cron */20 за 9+ часов сработал 2 раза (00:08 и 05:24 UTC,
 # 02–03.10.2026) — GitHub не гарантирует расписание. Cron раз в час оставлен страховкой, если цепочка оборвётся.
 # Репо публичный → минуты Actions не тратят квоту Papagera (решение Никиты 02.10.2026).
@@ -36,7 +36,7 @@ jobs:
   forecast:
     if: vars.FORECAST_SUBMIT == '1'
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 360   # максимум GitHub (6 ч): цикл 325 + запас 5 + подготовка ~5 + повторы перезапуска до 12.5
     env:
       METACULUS_TOKEN: ${{ secrets.METACULUS_TOKEN }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -77,7 +77,7 @@ jobs:
           --tournaments "${{ vars.FORECAST_TOURNAMENTS || 'fall,minibench' }}" --quant-hints
           --research agent --search web --agent-model openrouter/google/gemini-3.8-flash --agent-max-news 2
           --model openrouter/anthropic/claude-opus-5.5 --reasoning high --predictions 1 --run-budget 1.0
-          --loop-minutes 335 --poll-minutes 10
+          --loop-minutes 325 --poll-minutes 10
 
       - name: Итог цикла
         if: always()
@@ -90,8 +90,9 @@ jobs:
           path: state
           key: forecast-state-${{ github.run_id }}-${{ github.run_attempt }}
 
+      # Повторы на 5xx/сети (07.10.2026: HTTP 500 при инциденте GitHub оборвал цепочку на час) — 30/60/120/240/300 с.
       - name: Перезапустить цикл
         if: success() || failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run forecast.yml --repo "${{ github.repository }}" --ref "${{ github.ref_name }}"
+        run: python -m forecast_bot.restart --repo "${{ github.repository }}" --ref "${{ github.ref_name }}"
