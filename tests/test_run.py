@@ -191,6 +191,7 @@ def test_workflow_gates_and_limits():
     names = [s.get("name") for s in job["steps"]]
     assert names.index("Сохранить состояние") < names.index("Перезапустить цикл")
     assert all(v.startswith("${{ secrets.") for k, v in job["env"].items() if k.endswith(("_TOKEN", "_KEY")))
+    assert 'tee -a "$GITHUB_STEP_SUMMARY"' in steps["Итог цикла"]["run"]  # итог виден и в логе (gh run view --log)
     assert job["env"]["AI_USER_DAY_CALLS"] == "150"  # 5 прогнозов × до 4 обновлений pulse в сутки — не 20
 
 
