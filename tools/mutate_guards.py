@@ -401,6 +401,30 @@ SOURCE_MUTATIONS = {
     "перезапуск: успех при провале всех попыток": (
         "forecast_bot.restart", "    log(f\"перезапуск не удался за {len(PAUSES_S) + 1} попыток — подхватит cron (раз в час)\")\n    return 1",
         "    return 0", "tests/test_restart.py::test_gives_up_after_all_pauses_and_fails_step"),
+    "manifold: цена толпы в момент t и позже": (
+        "forecast_bot.manifold", 'if b.get("createdTime") and b["createdTime"] < ts', 'if b.get("createdTime") and b["createdTime"] <= ts + 1e9',
+        "tests/test_manifold.py::test_prob_at_strictly_before_t"),
+    "manifold: решённый до t рынок в выборке": (
+        "forecast_bot.manifold", "    if m.resolved_at and m.resolved_at <= m.t:", "    if False:",
+        "tests/test_manifold.py::test_eligible_rules"),
+    "manifold: ряд FRED/Yahoo не обрезан датой t": (
+        "tools.manifold_backtest", "keep = [(d_, v) for d_, v in zip(dates, vals) if d_ < t.date().isoformat()]",
+        "keep = list(zip(dates, vals))", "tests/test_manifold.py::test_time_machine_cuts_series_and_disables_fetch"),
+    "manifold: fetch_url в бэктесте включён": (
+        "tools.manifold_backtest", "    A.fred_series, A.stock_history, A.fetch_url = fred, stock, fetch",
+        "    A.fred_series, A.stock_history = fred, stock", "tests/test_manifold.py::test_time_machine_cuts_series_and_disables_fetch"),
+    "manifold: неразобранная проверка = чисто": (
+        "tools.manifold_backtest", '        return True, "ответ проверки не разобран — считаем утечкой"',
+        '        return False, ""', "tests/test_manifold.py::test_leak_check_unparsed_answer_is_leak"),
+    "manifold: непроверенное описание прогнозируется": (
+        "tools.manifold_backtest", "if m.id in done or flags.get(m.id, True):", "if m.id in done or flags.get(m.id, False):",
+        "tests/test_manifold.py::test_forecast_skips_flagged_and_unchecked_and_stops_at_cap"),
+    "manifold: потолок этапа не проверяется": (
+        "tools.manifold_backtest", '        if stage_spent() >= STAGE_CAP_USD:\n            print(f"потолок этапа',
+        '        if False:\n            print(f"потолок этапа', "tests/test_manifold.py::test_forecast_skips_flagged_and_unchecked_and_stops_at_cap"),
+    "manifold: даты из вопроса считаются утечкой": (
+        "forecast_bot.manifold", "    allowed = {close.date(), *dates_in(known)}", "    allowed = {close.date()}",
+        "tests/test_manifold.py::test_dates_after_t_except_known"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),
