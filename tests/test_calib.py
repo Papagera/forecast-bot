@@ -95,3 +95,18 @@ def test_research_strength_reaches_journal(fake_llm, fake_asknews, monkeypatch):
                                tournaments=["t"], submit=False))
     row = Journal(paths.journal_db()).rows(result.run_id)[0]
     assert row["research_cited_facts"] == 2 and row["research_official"] == 1   # новость + FRED (официальный)
+
+
+def test_step_summary_shows_predictions_and_spread(fake_llm, fake_asknews, monkeypatch):
+    """Итог прогона в Actions показывает число прогнозов и разброс — журнал снаружи не читается (кэш Actions)."""
+    import time
+
+    from forecast_bot import paths, summary
+    from forecast_bot.bot import ForecastBot
+
+    monkeypatch.delenv("FORECAST_PREDICTIONS", raising=False)
+    _cycle_answers(fake_llm, [20, 30, 25, 40, 30])
+    asyncio.run(R.run(client=FakeMetaculusClient(questions()[:1]), bot=ForecastBot(),
+                      journal=Journal(paths.journal_db()), tournaments=["minibench"], submit=False))
+    out = summary.render(time.time() - 600)
+    assert "| прогнозов | разброс |" in out and "| 5 | 0.200 |" in out
