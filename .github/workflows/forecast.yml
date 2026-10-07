@@ -47,6 +47,11 @@ jobs:
       FORECAST_STATE_DIR: ${{ github.workspace }}/state
       FORECAST_REPORTS_DIR: ${{ github.workspace }}/state/reports
       AI_LEDGER_PATH: ${{ github.workspace }}/state/ai_ledger.db
+      # 5 прогнозов на вопрос (Никита 07.10.2026): до 27 строк леджера на прогноз вопроса (агент 7 + поиск 2×2 +
+      # 5 прогнозов + 5 разборов; тест test_calib), а Market Pulse обновляется до 5 раз за сутки (суточное + 4 в
+      # последние 12 ч, run.needs_update). Штатные 20/сутки на вопрос (ai_guard per_user_day_calls) отсекли бы прогноз
+      # посреди работы и остановили опрос. Деньги держат --run-budget $1 и APP_LIMITS["forecast"] $6/сутки.
+      AI_USER_DAY_CALLS: "150"
       FORECAST_ENV_FILE: ${{ github.workspace }}/.env.absent
     steps:
       - uses: actions/checkout@v4
@@ -76,7 +81,7 @@ jobs:
           python -m forecast_bot.run --mode submit
           --tournaments "${{ vars.FORECAST_TOURNAMENTS || 'fall,minibench' }}" --quant-hints
           --research agent --search web --agent-model openrouter/google/gemini-3.8-flash --agent-max-news 2
-          --model openrouter/anthropic/claude-opus-5.5 --reasoning high --predictions 1 --run-budget 1.0
+          --model openrouter/anthropic/claude-opus-5.5 --reasoning high --predictions 5 --run-budget 1.0
           --loop-minutes 325 --poll-minutes 10
 
       - name: Итог цикла
