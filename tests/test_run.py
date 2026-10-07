@@ -178,7 +178,7 @@ def test_workflow_gates_and_limits():
     for part in ("--mode submit", "--tournaments \"${{ vars.FORECAST_TOURNAMENTS || 'fall,minibench' }}\"",
                  "--quant-hints", "--research agent",
                  "--agent-model openrouter/google/gemini-3.8-flash", "--agent-max-news 2",
-                 "--model openrouter/anthropic/claude-opus-5.5", "--reasoning high", "--predictions 1",
+                 "--model openrouter/anthropic/claude-opus-5.5", "--reasoning high", "--predictions 5",
                  "--run-budget 1.0", "--loop-minutes 325", "--poll-minutes 10"):
         assert part in cmd
     # окно цикла + запас на последний вопрос + подготовка job + все повторы перезапуска укладываются в timeout
@@ -191,6 +191,7 @@ def test_workflow_gates_and_limits():
     names = [s.get("name") for s in job["steps"]]
     assert names.index("Сохранить состояние") < names.index("Перезапустить цикл")
     assert all(v.startswith("${{ secrets.") for k, v in job["env"].items() if k.endswith(("_TOKEN", "_KEY")))
+    assert job["env"]["AI_USER_DAY_CALLS"] == "150"  # 5 прогнозов × до 4 обновлений pulse в сутки — не 20
 
 
 def test_every_llm_call_lands_in_ledger(fake_llm, fake_asknews):

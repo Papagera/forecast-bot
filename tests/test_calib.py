@@ -110,3 +110,38 @@ def test_step_summary_shows_predictions_and_spread(fake_llm, fake_asknews, monke
                       journal=Journal(paths.journal_db()), tournaments=["minibench"], submit=False))
     out = summary.render(time.time() - 600)
     assert "| прогнозов | разброс |" in out and "| 5 | 0.200 |" in out
+
+
+def test_five_predictions_fit_battle_per_question_call_limit(fake_llm, fake_asknews, monkeypatch):
+    """Бой (07.10.2026): агент на максимуме шагов + 5 прогнозов + 5 разборов. Строк леджера на вопрос вместе с
+    платным веб-поиском (2 поиска × 2 строки: модель + поиск) должно хватать лимита из workflow — и НЕ хватать 20."""
+    from pathlib import Path
+
+    import yaml
+
+    from forecast_bot import agent as A, ai_guard, paths
+    from forecast_bot.bot import ForecastBot
+
+    wf = yaml.safe_load((Path(__file__).resolve().parent.parent / ".github/workflows/forecast.yml").read_text())
+    limit = int(wf["jobs"]["forecast"]["env"]["AI_USER_DAY_CALLS"])
+    monkeypatch.setitem(ai_guard.LIMITS, "per_user_day_calls", limit)
+
+    async def news(self, query):
+        return "**Свежая новость** событие ещё не произошло"
+
+    monkeypatch.setattr(ForecastBot, "_web_search", news)
+    monkeypatch.setattr(A, "fred_series", lambda sid: "FRED: 4.1")
+    monkeypatch.setattr(A, "fetch_url", lambda u: "страница")
+    monkeypatch.setattr(A, "stock_history", lambda s: "100")
+    monkeypatch.setenv("FORECAST_RESEARCH", "agent")
+    monkeypatch.setenv("FORECAST_PREDICTIONS", "5")
+    fake_llm.tool_plan = ["search_news", "search_news", "fred_series", "fetch_url", "fred_series", "stock_history"]
+    result = asyncio.run(R.run(client=FakeMetaculusClient(questions()[:1]), bot=ForecastBot(),
+                               journal=Journal(paths.journal_db()), tournaments=["minibench"], submit=False))
+    row = result.rows[0]
+    search_rows = 2 * 2  # в бою каждый веб-поиск — строка модели + строка поиска (guarded_llm.SEARCH_ROW_MODEL)
+    assert row["status"] == "ok" and row["predictions_n"] == 5
+    print("строк леджера на вопрос:", row["llm_calls"], "+ поиск", search_rows)
+    per_forecast = row["llm_calls"] + search_rows
+    updates = R.FINAL_WINDOW_S // R.FINAL_MIN_AGE_S + 1  # pulse, худшие сутки: суточное + 4 в последние 12 ч
+    assert per_forecast > 20 and per_forecast * updates <= limit
