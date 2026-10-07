@@ -425,6 +425,21 @@ SOURCE_MUTATIONS = {
     "manifold: даты из вопроса считаются утечкой": (
         "forecast_bot.manifold", "    allowed = {close.date(), *dates_in(known)}", "    allowed = {close.date()}",
         "tests/test_manifold.py::test_dates_after_t_except_known"),
+    "eth: базовые линии видят исход после t": (
+        "forecast_bot.eth_direction", "    while s + timedelta(days=h) <= t:", "    while s <= t:",
+        "tests/test_eth_direction.py::test_baselines_ignore_everything_after_t"),
+    "eth: ставка финансирования в момент t": (
+        "forecast_bot.eth_direction", "bisect_right([f[0] for f in funding], t.timestamp() - 1e-6) - 1",
+        "bisect_right([f[0] for f in funding], t.timestamp()) - 1", "tests/test_eth_direction.py::test_funding_sign_strictly_before_t"),
+    "eth: сделка без порога": (
+        "forecast_bot.eth_direction", "    else:\n        return None\n    return PaperTrade",
+        "    else:\n        side = 1\n    return PaperTrade", "tests/test_eth_direction.py::test_paper_trade_thresholds_and_fee"),
+    "eth: без комиссии": (
+        "forecast_bot.eth_direction", "side * (y_price / x - 1) - FEE_ROUND_TRIP", "side * (y_price / x - 1)",
+        "tests/test_eth_direction.py::test_paper_trade_thresholds_and_fee"),
+    "eth: в вопросе история после t": (
+        "tools.eth_direction", "for k in range(14, 0, -1)]", "for k in range(14, -3, -1)]",
+        "tests/test_eth_direction.py::test_question_has_no_price_after_t"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),
