@@ -392,6 +392,15 @@ SOURCE_MUTATIONS = {
     "pm4: лестница из одной даты / разных вопросов": (
         "forecast_bot.polymarket.biases", '                if s1["date"] >= s2["date"] or s1.get("tmpl") != s2.get("tmpl"):',
         "                if False:", "tests/test_polymarket_biases.py::test_ladder_needs_later_date_and_same_question"),
+    "перезапуск: без повторов на 5xx": (
+        "forecast_bot.restart", "        if not retryable(out):", "        if True:",
+        "tests/test_restart.py::test_retries_5xx_with_pauses_then_succeeds"),
+    "перезапуск: 429 не повторяется": (
+        "forecast_bot.restart", '"HTTP 5\\d\\d|HTTP 429|', '"HTTP 5\\d\\d|',
+        "tests/test_restart.py::test_rate_limit_429_is_retried"),
+    "перезапуск: успех при провале всех попыток": (
+        "forecast_bot.restart", "    log(f\"перезапуск не удался за {len(PAUSES_S) + 1} попыток — подхватит cron (раз в час)\")\n    return 1",
+        "    return 0", "tests/test_restart.py::test_gives_up_after_all_pauses_and_fails_step"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),
