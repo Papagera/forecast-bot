@@ -50,11 +50,17 @@ def render(since: float) -> str:
         except (ValueError, TypeError):
             lines += ["Цикл: файл статистики повреждён.", ""]
     if rows:
-        lines += ["| вопрос | тип | статус | $ | AskNews |", "|---|---|---|---|---|"]
+        # прогнозов / разброс — проверка калибровочного журнала (PR #17) прямо в итоге прогона: журнал живёт в кэше
+        # Actions и снаружи не читается
+        lines += ["| вопрос | тип | статус | $ | AskNews | прогнозов | разброс |", "|---|---|---|---|---|---|---|"]
         for r in rows:
             title = (r["title"] or "").replace("|", "/")[:80]
+            keys = r.keys()
+            n = r["predictions_n"] if "predictions_n" in keys and r["predictions_n"] is not None else "—"
+            sp = r["predictions_spread"] if "predictions_spread" in keys else None
             lines.append(f"| [{title}]({r['url']}) | {r['question_type']} | {r['status']} | "
-                         f"{(r['cost_usd'] or 0):.4f} | {r['asknews_calls'] or 0} |")
+                         f"{(r['cost_usd'] or 0):.4f} | {r['asknews_calls'] or 0} | {n} | "
+                         f"{'—' if sp is None else f'{sp:.3f}'} |")
     else:
         lines.append("Новых открытых вопросов нет.")
     return "\n".join(lines) + "\n"

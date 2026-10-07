@@ -168,6 +168,7 @@ class ResearchAgent:
         self.news_calls = 0
         self.news_failed = False
         self.sources: dict[str, str] = {}
+        self.source_meta: dict[str, str] = {}  # S# → «<инструмент> <url|series_id|…>» (официальный ли источник)
         self.raw_brief = ""
         self.verdict: verify.Verdict | None = None
 
@@ -209,6 +210,7 @@ class ResearchAgent:
         sid = f"S{len(self.sources)}"
         self.sources[sid] = result
         detail = args.get("url") or args.get("query") or args.get("series_id") or args.get("symbol") or ""
+        self.source_meta[sid] = f"{name} {detail}"
         return f"[{sid}] source: {name} {detail}\n{result}"
 
     async def _loop(self, question: Any) -> str:

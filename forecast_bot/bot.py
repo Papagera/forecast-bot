@@ -116,9 +116,15 @@ class ForecastBot(FallTemplateBot2026):
         self.web_searches: Counter[int] = Counter()  # веб-поиски агента (OpenRouter + Exa) на вопрос
         self.research_stats: dict[int, dict] = {}  # сверка чисел исследования агента (verify.check)
         self.quant_hints: dict[int, str] = {}      # подсказки quant, ушедшие прогнозисту (Market Pulse)
+        self.prediction_sets: dict[int, list] = {}  # все прогнозы вопроса ДО агрегации (калибровка, этап 4)
         # У шаблона семафор — атрибут класса, привязывается к первому event loop; второй
         # asyncio.run в том же процессе (тесты) упал бы «bound to a different event loop».
         self._concurrency_limiter = asyncio.Semaphore(self._max_concurrent_questions)
+
+    async def _aggregate_predictions(self, predictions: list, question: Any) -> Any:
+        """Все прогнозы вопроса сохраняются до агрегации (медиана шаблона не меняется) — разброс для калибровки."""
+        self.prediction_sets[question.id_of_question] = list(predictions)
+        return await super()._aggregate_predictions(predictions, question)
 
     @staticmethod
     def search_backend() -> str:
@@ -232,10 +238,14 @@ class ForecastBot(FallTemplateBot2026):
                 counter = self.web_searches if backend == "web" else self.asknews_calls
                 counter[question.id_of_question] += agent.news_calls
                 if agent.verdict is not None:
+                    from forecast_bot import calib
+
                     self.research_stats[question.id_of_question] = {
                         "research_numbers": agent.verdict.numbers_total,
                         "research_unverified": agent.verdict.numbers_unverified,
                         "research_dropped": "\n".join(agent.verdict.dropped)[:4000],
+                        **calib.research_strength(agent.verdict.facts_cited, agent.verdict.cited_sources,
+                                                  agent.source_meta),
                     }
 
     async def _web_search(self, query: str) -> str:

@@ -261,6 +261,18 @@ SOURCE_MUTATIONS = {
         "forecast_bot.polymarket.series_quant", "    if target in have:\n        return None, ",
         "    if False:\n        return None, ",
         "tests/test_polymarket_series.py::test_macro_uses_vintage_before_t_and_refuses_published_month"),
+    "калибровка: прогнозы до агрегации не сохраняются": (
+        "forecast_bot.bot", "        self.prediction_sets[question.id_of_question] = list(predictions)", "        pass",
+        "tests/test_calib.py::test_all_predictions_and_spread_reach_journal_median_unchanged"),
+    "калибровка: разброс не пишется в журнал": (
+        "forecast_bot.run", "                base.update(calib.summarize(sets))", "                pass",
+        "tests/test_calib.py::test_all_predictions_and_spread_reach_journal_median_unchanged"),
+    "калибровка: ссылка на вопрос [S0] считается фактом": (
+        "forecast_bot.verify", 'ids = (cited_ids(line) & set(norm)) - {"S0"}', "ids = cited_ids(line) & set(norm)",
+        "tests/test_calib.py::test_verify_counts_cited_facts_and_sources"),
+    "калибровка: любой сайт — официальный": (
+        "forecast_bot.calib", "        return bool(host and OFFICIAL_HOST.search(host))", "        return bool(host)",
+        "tests/test_calib.py::test_is_official"),
     "pm2: винтаж ALFRED на день t": (
         "forecast_bot.polymarket.series_quant", "return (t - timedelta(days=1)).date()", "return t.date()",
         "tests/test_polymarket_series.py::test_vintage_is_day_before_t"),
@@ -391,6 +403,54 @@ SOURCE_MUTATIONS = {
     "Г-замер: уровни меньше min_size в зачёт": (
         "tools.mm_forward", "for p, q in levels if q >= min_size)", "for p, q in levels)",
         "tests/test_mm_forward.py::test_book_q_counts_only_within_spread_and_min_size"),
+    "перезапуск: без повторов на 5xx": (
+        "forecast_bot.restart", "        if not retryable(out):", "        if True:",
+        "tests/test_restart.py::test_retries_5xx_with_pauses_then_succeeds"),
+    "перезапуск: 429 не повторяется": (
+        "forecast_bot.restart", '"HTTP 5\\d\\d|HTTP 429|', '"HTTP 5\\d\\d|',
+        "tests/test_restart.py::test_rate_limit_429_is_retried"),
+    "перезапуск: успех при провале всех попыток": (
+        "forecast_bot.restart", "    log(f\"перезапуск не удался за {len(PAUSES_S) + 1} попыток — подхватит cron (раз в час)\")\n    return 1",
+        "    return 0", "tests/test_restart.py::test_gives_up_after_all_pauses_and_fails_step"),
+    "manifold: цена толпы в момент t и позже": (
+        "forecast_bot.manifold", 'if b.get("createdTime") and b["createdTime"] < ts', 'if b.get("createdTime") and b["createdTime"] <= ts + 1e9',
+        "tests/test_manifold.py::test_prob_at_strictly_before_t"),
+    "manifold: решённый до t рынок в выборке": (
+        "forecast_bot.manifold", "    if m.resolved_at and m.resolved_at <= m.t:", "    if False:",
+        "tests/test_manifold.py::test_eligible_rules"),
+    "manifold: ряд FRED/Yahoo не обрезан датой t": (
+        "tools.manifold_backtest", "keep = [(d_, v) for d_, v in zip(dates, vals) if d_ < t.date().isoformat()]",
+        "keep = list(zip(dates, vals))", "tests/test_manifold.py::test_time_machine_cuts_series_and_disables_fetch"),
+    "manifold: fetch_url в бэктесте включён": (
+        "tools.manifold_backtest", "    A.fred_series, A.stock_history, A.fetch_url = fred, stock, fetch",
+        "    A.fred_series, A.stock_history = fred, stock", "tests/test_manifold.py::test_time_machine_cuts_series_and_disables_fetch"),
+    "manifold: неразобранная проверка = чисто": (
+        "tools.manifold_backtest", '        return True, "ответ проверки не разобран — считаем утечкой"',
+        '        return False, ""', "tests/test_manifold.py::test_leak_check_unparsed_answer_is_leak"),
+    "manifold: непроверенное описание прогнозируется": (
+        "tools.manifold_backtest", "if m.id in done or flags.get(m.id, True):", "if m.id in done or flags.get(m.id, False):",
+        "tests/test_manifold.py::test_forecast_skips_flagged_and_unchecked_and_stops_at_cap"),
+    "manifold: потолок этапа не проверяется": (
+        "tools.manifold_backtest", '        if stage_spent() >= STAGE_CAP_USD:\n            print(f"потолок этапа',
+        '        if False:\n            print(f"потолок этапа', "tests/test_manifold.py::test_forecast_skips_flagged_and_unchecked_and_stops_at_cap"),
+    "manifold: даты из вопроса считаются утечкой": (
+        "forecast_bot.manifold", "    allowed = {close.date(), *dates_in(known)}", "    allowed = {close.date()}",
+        "tests/test_manifold.py::test_dates_after_t_except_known"),
+    "eth: базовые линии видят исход после t": (
+        "forecast_bot.eth_direction", "    while s + timedelta(days=h) <= t:", "    while s <= t:",
+        "tests/test_eth_direction.py::test_baselines_ignore_everything_after_t"),
+    "eth: ставка финансирования в момент t": (
+        "forecast_bot.eth_direction", "bisect_right([f[0] for f in funding], t.timestamp() - 1e-6) - 1",
+        "bisect_right([f[0] for f in funding], t.timestamp()) - 1", "tests/test_eth_direction.py::test_funding_sign_strictly_before_t"),
+    "eth: сделка без порога": (
+        "forecast_bot.eth_direction", "    else:\n        return None\n    return PaperTrade",
+        "    else:\n        side = 1\n    return PaperTrade", "tests/test_eth_direction.py::test_paper_trade_thresholds_and_fee"),
+    "eth: без комиссии": (
+        "forecast_bot.eth_direction", "side * (y_price / x - 1) - FEE_ROUND_TRIP", "side * (y_price / x - 1)",
+        "tests/test_eth_direction.py::test_paper_trade_thresholds_and_fee"),
+    "eth: в вопросе история после t": (
+        "tools.eth_direction", "for k in range(14, 0, -1)]", "for k in range(14, -3, -1)]",
+        "tests/test_eth_direction.py::test_question_has_no_price_after_t"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),
