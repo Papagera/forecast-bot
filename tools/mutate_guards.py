@@ -261,6 +261,18 @@ SOURCE_MUTATIONS = {
         "forecast_bot.polymarket.series_quant", "    if target in have:\n        return None, ",
         "    if False:\n        return None, ",
         "tests/test_polymarket_series.py::test_macro_uses_vintage_before_t_and_refuses_published_month"),
+    "калибровка: прогнозы до агрегации не сохраняются": (
+        "forecast_bot.bot", "        self.prediction_sets[question.id_of_question] = list(predictions)", "        pass",
+        "tests/test_calib.py::test_all_predictions_and_spread_reach_journal_median_unchanged"),
+    "калибровка: разброс не пишется в журнал": (
+        "forecast_bot.run", "                base.update(calib.summarize(sets))", "                pass",
+        "tests/test_calib.py::test_all_predictions_and_spread_reach_journal_median_unchanged"),
+    "калибровка: ссылка на вопрос [S0] считается фактом": (
+        "forecast_bot.verify", 'ids = (cited_ids(line) & set(norm)) - {"S0"}', "ids = cited_ids(line) & set(norm)",
+        "tests/test_calib.py::test_verify_counts_cited_facts_and_sources"),
+    "калибровка: любой сайт — официальный": (
+        "forecast_bot.calib", "        return bool(host and OFFICIAL_HOST.search(host))", "        return bool(host)",
+        "tests/test_calib.py::test_is_official"),
     "pm2: винтаж ALFRED на день t": (
         "forecast_bot.polymarket.series_quant", "return (t - timedelta(days=1)).date()", "return t.date()",
         "tests/test_polymarket_series.py::test_vintage_is_day_before_t"),
