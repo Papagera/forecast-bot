@@ -44,6 +44,13 @@ PER_QUESTION_DAY_CALLS = 40  # ~16 вызовов на вопрос (1 свод�
 # Сколько после окна цикла ещё можно НАЧАТЬ вопрос (агент ≈ 1–3 мин на вопрос): 2 мин подготовки job +
 # 335 мин цикла + 5 мин + последний вопрос ≈ 345 < timeout 350 мин.
 LOOP_GRACE_S = 300
+ERROR_RETRY_LIMIT = 2          # ошибок по вопросу подряд (без успеха между ними) …
+ERROR_PAUSE_S = 24 * 3600      # … за сутки → вопрос пропускается без вызовов ИИ
+
+
+def is_per_question_limit(budget_hit: str) -> bool:
+    """Отказ ai_guard по лимиту вызовов на ОДИН вопрос (per_user_day_calls), а не по деньгам."""
+    return "per-user" in (budget_hit or "")
 
 
 def pulse_slugs(today: dt.date) -> list[str]:
@@ -239,6 +246,15 @@ async def run(
                         tournament=str(tournament), question_type=type(q).__name__,
                         title=q.question_text, url=q.page_url, mode=mode, model=model)
 
+            # 08.10.2026: числовой вопрос Market Pulse падал на разборе (прогноз в 10 раз вне диапазона) в каждом
+            # опросе — $0.2 за попытку, пока не упёрся в лимит вызовов на вопрос. Сломанный вопрос — пауза на сутки.
+            if journal.recent_errors(qid, time.time() - ERROR_PAUSE_S) >= ERROR_RETRY_LIMIT:
+                row = dict(base, status=J.SKIPPED_ERRORS,
+                           error=f"{ERROR_RETRY_LIMIT}+ ошибок за {ERROR_PAUSE_S // 3600} ч — пауза без вызовов ИИ")
+                journal.record(**row)
+                result.rows.append(row)
+                continue
+
             per_q = getattr(bot, "asknews_calls_per_research", 0)
             if per_q and journal.asknews_calls_this_month() + per_q > asknews_cap:
                 row = dict(base, status=J.SKIPPED_ASKNEWS, error=f"AskNews: потолок {asknews_cap}/мес")
@@ -273,11 +289,15 @@ async def run(
 
             budget_hit = guarded_llm.BUDGET_HITS.pop(user, None)
             if budget_hit:
-                # Честный пропуск: ничего не отправляем (даже если часть прогнозов успела), прогон стоп.
+                # Честный пропуск: ничего не отправляем (даже если часть прогнозов успела).
                 row = dict(base, status=J.SKIPPED_BUDGET, error=budget_hit)
                 journal.record(**row)
                 result.rows.append(row)
-                result.stopped_reason = f"ai_guard: {budget_hit}"
+                if is_per_question_limit(budget_hit):
+                    # Лимит ОДНОГО вопроса — остальные вопросы опроса не трогает (08.10.2026: один числовой вопрос
+                    # останавливал каждый опрос, 19 вопросов нового сезона Market Pulse остались без прогноза).
+                    continue
+                result.stopped_reason = f"ai_guard: {budget_hit}"  # деньги приложения / прогона — стоп опроса
                 return result
 
             if isinstance(report, BaseException):

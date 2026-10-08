@@ -62,6 +62,7 @@ OK = "ok"
 ERROR = "error"
 SKIPPED_BUDGET = "skipped_budget"
 SKIPPED_ASKNEWS = "skipped_asknews_quota"
+SKIPPED_ERRORS = "skipped_errors"   # вопрос падал раз за разом — пауза, без вызовов ИИ (08.10.2026)
 
 
 class Journal:
@@ -89,6 +90,15 @@ class Journal:
                 (question_id, OK),
             ).fetchone()
         return row is not None
+
+    def recent_errors(self, question_id: int, since: float) -> int:
+        """Ошибок по вопросу с момента `since` после последней успешной строки (успех обнуляет счёт)."""
+        with self._conn() as c:
+            last_ok = c.execute("SELECT MAX(created_at) t FROM forecasts WHERE question_id = ? AND status = ?",
+                                (question_id, OK)).fetchone()["t"] or 0
+            row = c.execute("SELECT COUNT(*) n FROM forecasts WHERE question_id = ? AND status = ? AND created_at >= ?",
+                            (question_id, ERROR, max(since, last_ok))).fetchone()
+        return int(row["n"])
 
     def last_submitted_at(self, question_id: int) -> Optional[float]:
         """Время последней успешной отправки по вопросу (spot-турниры обновляют прогноз по расписанию)."""
