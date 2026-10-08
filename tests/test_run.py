@@ -344,3 +344,32 @@ def test_missing_keys_asknews_only_for_asknews_mode():
     assert R.missing_keys(base) == ["ASKNEWS_API_KEY"]
     assert R.missing_keys({**base, "FORECAST_RESEARCH": "online"}) == []
     assert R.missing_keys({**base, "FORECAST_RESEARCH": "none"}) == []
+
+
+def test_per_question_limit_does_not_stop_poll(fake_llm, fake_asknews, monkeypatch):
+    """08.10.2026: лимит вызовов ОДНОГО вопроса останавливал весь опрос — 19 вопросов Market Pulse без прогноза."""
+    # лимит каждого вопроса уже выбран сегодня (раннер поднимает лимит до ≥ 40 — выбираем 200 строк)
+    conn = ai_guard._conn()
+    for qid in (201, 202, 203, 204):
+        conn.executemany('INSERT INTO usage VALUES (?,?,?,?,?,?,?)',
+                         [(time.time() - 60, "openrouter", "m", f"forecast:q{qid}", 0, 0, 0.0)] * 200)
+    conn.commit(); conn.close()
+    client = FakeMetaculusClient(questions())
+    result, _ = _run(client, submit=False)
+    assert [r["status"] for r in result.rows] == ["skipped_budget"] * 4   # все вопросы опроса, не только первый
+    assert result.stopped_reason is None and all("per-user" in r["error"] for r in result.rows)
+    assert client.predictions == []
+
+
+def test_question_with_recent_errors_is_paused_without_llm(fake_llm, fake_asknews):
+    from forecast_bot import paths
+
+    journal = Journal(paths.journal_db())
+    for _ in range(R.ERROR_RETRY_LIMIT):
+        journal.record(run_id="old", question_id=201, mode="dry", status="error", error="ValidationError")
+    result, _ = _run(FakeMetaculusClient(questions()[:2]), submit=False, journal=journal)
+    assert {r["question_id"]: r["status"] for r in result.rows} == {201: "skipped_errors", 202: "ok"}
+    assert not [p for p in fake_llm.prompts if "Будет ли X?" in p]          # вопрос 201 не дёргал модель
+    journal.record(run_id="old", question_id=201, mode="dry", status="ok")  # успех обнуляет счёт ошибок
+    result, _ = _run(FakeMetaculusClient(questions()[:1]), submit=False, journal=journal)
+    assert result.rows[0]["status"] == "ok"

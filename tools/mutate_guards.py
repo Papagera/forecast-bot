@@ -440,6 +440,15 @@ SOURCE_MUTATIONS = {
     "eth: в вопросе история после t": (
         "tools.eth_direction", "for k in range(14, 0, -1)]", "for k in range(14, -3, -1)]",
         "tests/test_eth_direction.py::test_question_has_no_price_after_t"),
+    "раннер: лимит одного вопроса останавливает опрос": (
+        "forecast_bot.run", '    return "per-user" in (budget_hit or "")', "    return False",
+        "tests/test_run.py::test_per_question_limit_does_not_stop_poll"),
+    "раннер: сломанный вопрос дёргается каждый опрос": (
+        "forecast_bot.run", "            if journal.recent_errors(qid, time.time() - ERROR_PAUSE_S) >= ERROR_RETRY_LIMIT:",
+        "            if False:", "tests/test_run.py::test_question_with_recent_errors_is_paused_without_llm"),
+    "журнал: успех не обнуляет счёт ошибок": (
+        "forecast_bot.journal", "(question_id, ERROR, max(since, last_ok))", "(question_id, ERROR, since)",
+        "tests/test_run.py::test_question_with_recent_errors_is_paused_without_llm"),
     "RPM валит вопрос": (
         "forecast_bot.guarded_llm", "if _is_rate_limit(exc) and rate_waits < RATE_WAIT_TRIES:", "if False:",
         "tests/test_guard.py::test_rpm_waits_for_window_instead_of_failing"),
